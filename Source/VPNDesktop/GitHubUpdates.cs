@@ -10,7 +10,10 @@ using System.Text.RegularExpressions;
 
 namespace VPNDesktop;
 
-internal sealed record GitHubRelease(string Tag, UpdateVersion Version, Uri Download, byte[] Digest, long Size);
+internal sealed record GitHubRelease(string Tag, UpdateVersion Version, Uri Download, byte[] Digest, long Size,
+    UpdateManifestAsset? Manifest = null);
+
+internal sealed record UpdateManifestAsset(byte[] Digest, long Size);
 
 internal static partial class GitHubUpdates
 {
@@ -29,7 +32,8 @@ internal static partial class GitHubUpdates
         ParseProductVersion(typeof(App).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion)
         ?? new(InstalledVersion, null);
 
-    private sealed record CachedRelease(string? Tag, string? Digest, long Size)
+    private sealed record CachedRelease(string? Tag, string? Digest, long Size,
+        string? ManifestDigest = null, long ManifestSize = 0)
     {
         public GitHubRelease? ToRelease()
         {
@@ -37,7 +41,9 @@ internal static partial class GitHubUpdates
                 || !DigestPattern().IsMatch(Digest) || Size <= 0 || Size > MaxArchive)
                 return null;
             return new GitHubRelease(Tag, version, new Uri($"{ReleasesUrl}/download/{Tag}/{AssetName}"),
-                Convert.FromHexString(Digest[7..]), Size);
+                Convert.FromHexString(Digest[7..]), Size,
+                ManifestDigest is { } digest && DigestPattern().IsMatch(digest) && ManifestSize is > 0 and <= MaxManifest
+                    ? new UpdateManifestAsset(Convert.FromHexString(digest[7..]), ManifestSize) : null);
         }
     }
 
@@ -58,7 +64,9 @@ internal static partial class GitHubUpdates
     public static void SaveCache(GitHubRelease[] releases)
     {
         var saved = releases.Select(release => new CachedRelease(release.Tag,
-            "sha256:" + Convert.ToHexString(release.Digest), release.Size));
+            "sha256:" + Convert.ToHexString(release.Digest), release.Size,
+            release.Manifest is { } manifest ? "sha256:" + Convert.ToHexString(manifest.Digest) : null,
+            release.Manifest?.Size ?? 0));
         try
         {
             File.WriteAllBytes(CachePath + ".new", JsonSerializer.SerializeToUtf8Bytes(saved));
@@ -114,7 +122,14 @@ internal static partial class GitHubUpdates
             if (!asset.TryGetProperty("size", out var length) || !length.TryGetInt64(out long size))
                 continue;
 
-            if (new CachedRelease(tag, digest, size).ToRelease() is { } build
+            var manifest = release.GetProperty("assets").EnumerateArray().FirstOrDefault(item =>
+                item.GetProperty("name").GetString() == ManifestAssetName && item.GetProperty("state").GetString() == "uploaded" &&
+                item.GetProperty("browser_download_url").GetString() == $"{ReleasesUrl}/download/{tag}/{ManifestAssetName}");
+            string? manifestDigest = manifest.ValueKind != JsonValueKind.Undefined && manifest.TryGetProperty("digest", out var hash)
+                ? hash.GetString() : null;
+            long manifestSize = manifest.ValueKind != JsonValueKind.Undefined && manifest.TryGetProperty("size", out var bytes) &&
+                bytes.TryGetInt64(out long manifestLength) ? manifestLength : 0;
+            if (new CachedRelease(tag, digest, size, manifestDigest, manifestSize).ToRelease() is { } build
                 && prerelease == (build.Version.Prerelease is not null)
                 && string.Equals(asset.GetProperty("browser_download_url").GetString(), build.Download.AbsoluteUri, StringComparison.Ordinal))
                 yield return build;
@@ -130,10 +145,25 @@ internal static partial class GitHubUpdates
             string archivePath = Path.Combine(stage, AssetName);
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             deadline.CancelAfter(TimeSpan.FromMinutes(5));
-            await DownloadAsync(release, archivePath, progress, deadline.Token);
-
-            await Task.Run(() => Unpack(release, archivePath, stage, deadline.Token), deadline.Token);
-            File.Delete(archivePath);
+            bool prepared = false;
+            if (release.Manifest is not null)
+            {
+                try
+                {
+                    await Task.Run(() => PrepareChangedFilesAsync(release, InstallRoot, stage, progress, deadline.Token), deadline.Token);
+                    prepared = true;
+                }
+                catch (RangeUnsupportedException)
+                {
+                    Directory.Delete(Path.Combine(stage, "package"), recursive: true);
+                }
+            }
+            if (!prepared)
+            {
+                await DownloadAsync(release.Download, release.Digest, release.Size, archivePath, progress, deadline.Token);
+                await Task.Run(() => Unpack(release, archivePath, stage, deadline.Token), deadline.Token);
+                File.Delete(archivePath);
+            }
             File.Copy(Path.Combine(InstallRoot, "VPNDesktop.exe"), Path.Combine(stage, "updater.exe"));
             return stage;
         }
@@ -144,9 +174,9 @@ internal static partial class GitHubUpdates
         }
     }
 
-    private static async Task DownloadAsync(GitHubRelease release, string path, IProgress<int> progress, CancellationToken token)
+    private static async Task DownloadAsync(Uri url, byte[] digest, long size, string path,
+        IProgress<int>? progress, CancellationToken token)
     {
-        var url = release.Download;
         for (int redirect = 0; redirect < 5; redirect++)
         {
             using var request = MakeRequest(url);
@@ -159,7 +189,7 @@ internal static partial class GitHubUpdates
                 continue;
             }
             response.EnsureSuccessStatusCode();
-            if (response.Content.Headers.ContentLength is long declared && declared != release.Size)
+            if (response.Content.Headers.ContentLength is long declared && declared != size)
                 throw new IOException("Размер скачиваемого файла отличается от данных GitHub.");
 
             await using var input = await response.Content.ReadAsStreamAsync(token);
@@ -172,15 +202,18 @@ internal static partial class GitHubUpdates
             while ((count = await input.ReadAsync(buffer, token)) != 0)
             {
                 total += count;
-                if (total > release.Size)
+                if (total > size)
                     throw new IOException("Файл обновления больше размера, указанного GitHub.");
                 hash.AppendData(buffer, 0, count);
                 await output.WriteAsync(buffer.AsMemory(0, count), token);
-                int percent = (int)(total * 100 / release.Size);
+                int percent = (int)(total * 100 / size);
                 if (percent != reported)
-                    progress.Report(reported = percent);
+                {
+                    reported = percent;
+                    progress?.Report(percent);
+                }
             }
-            if (total != release.Size || !CryptographicOperations.FixedTimeEquals(hash.GetHashAndReset(), release.Digest))
+            if (total != size || !CryptographicOperations.FixedTimeEquals(hash.GetHashAndReset(), digest))
                 throw new IOException("SHA-256 файла обновления не совпадает с данными GitHub.");
             return;
         }
@@ -235,8 +268,7 @@ internal static partial class GitHubUpdates
         }
 
         string payload = Path.Combine(package, "VPNDesktop");
-        foreach (string file in new[] { "VPNDesktop.exe", "README.md", "Libraries/VPNDesktop.App.exe",
-                     "Libraries/VPNDesktop.dll", "Libraries/coreclr.dll", "Libraries/mihomo.exe", "Libraries/wintun.dll" })
+        foreach (string file in RequiredFiles)
             if (!File.Exists(Path.Combine(payload, file)))
                 throw new IOException("В архиве нет полной сборки Linkway.");
         if (!Directory.Exists(Path.Combine(payload, "Languages")) || !Directory.Exists(Path.Combine(payload, "Licenses")))

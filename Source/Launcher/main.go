@@ -10,8 +10,13 @@ import (
 
 func main() {
 	if len(os.Args) == 3 && os.Args[1] == "--install-update" {
-		if err := installUpdate(os.Args[2]); err != nil {
-			showError("Не удалось установить обновление Linkway.\n\n" + err.Error())
+		installed, err := installUpdate(os.Args[2])
+		if err != nil {
+			message := "Не удалось установить обновление Linkway."
+			if installed {
+				message = "Обновление Linkway установлено. Откройте VPNDesktop.exe вручную."
+			}
+			showError(message + "\n\n" + err.Error())
 			os.Exit(1)
 		}
 		return
@@ -38,8 +43,12 @@ func startApplication() error {
 		return err
 	}
 
+	return launchApplication(root, os.Args[1:])
+}
+
+func launchApplication(root string, args []string) error {
 	libraries := filepath.Join(root, "Libraries")
-	command := exec.Command(filepath.Join(libraries, "VPNDesktop.App.exe"), os.Args[1:]...)
+	command := exec.Command(filepath.Join(libraries, "VPNDesktop.App.exe"), args...)
 	command.Dir = libraries
 	if err := command.Start(); err != nil {
 		return err

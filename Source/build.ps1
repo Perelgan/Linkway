@@ -60,10 +60,12 @@ Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'LICENSE-Lucide.txt') -Destinati
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'LICENSE-YamlDotNet.txt') -Destination $licenses
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot '..\README.md') -Destination $bundle
 
-$launcherSources = @((Join-Path $PSScriptRoot 'Launcher\main.go'), (Join-Path $PSScriptRoot 'Launcher\update.go'))
+$launcherSources = @((Join-Path $PSScriptRoot 'Launcher\main.go'), (Join-Path $PSScriptRoot 'Launcher\update.go'), (Join-Path $PSScriptRoot 'Launcher\update_files.go'))
 go build -trimpath -ldflags '-H windowsgui -s -w' -o (Join-Path $bundle 'VPNDesktop.exe') @launcherSources
 if ($LASTEXITCODE -ne 0) { throw 'Go launcher build failed' }
 
 if ($ReleaseArchive) {
-    Compress-Archive -LiteralPath $bundle -DestinationPath (Join-Path (Split-Path -Parent $bundle) 'VPNDesktop-win-x64.zip') -Force
+    $archive = Join-Path (Split-Path -Parent $bundle) 'VPNDesktop-win-x64.zip'
+    Compress-Archive -LiteralPath $bundle -DestinationPath $archive -Force
+    & (Join-Path $PSScriptRoot 'write-update-manifest.ps1') -Archive $archive
 }

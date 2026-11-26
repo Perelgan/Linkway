@@ -47,51 +47,30 @@ func lockInstallation(root string) (func(), error) {
 	}, nil
 }
 
-func installUpdate(pidArgument string) error {
+func installUpdate(pidArgument string) (bool, error) {
 	executable, err := os.Executable()
 	if err != nil {
-		return err
+		return false, err
 	}
 	stage := filepath.Dir(executable)
 	root := filepath.Dir(stage)
 	if filepath.Base(executable) != "updater.exe" || !stagePattern.MatchString(filepath.Base(stage)) || !isPlainDirectory(stage) {
-		return errors.New("Не удалось проверить папку обновления.")
+		return false, errors.New("Не удалось проверить папку обновления.")
 	}
 	unlock, err := lockInstallation(root)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer unlock()
 
 	if err := waitForApplication(pidArgument); err != nil {
-		return err
+		return false, err
 	}
-	payload := filepath.Join(stage, "package", "VPNDesktop")
-	backup := filepath.Join(stage, "backup")
-	if !isPlainDirectory(filepath.Join(stage, "package")) || !isPlainDirectory(payload) {
-		return errors.New("Не удалось найти распакованную сборку обновления.")
+	if err := installFiles(root, stage); err != nil {
+		return false, err
 	}
-	items := append(append([]string{}, payloadItems...), "VPNDesktop.exe")
-	for _, name := range items {
-		if err := validatePayloadItem(root, name); err != nil {
-			return err
-		}
-		if err := validatePayloadItem(payload, name); err != nil {
-			return err
-		}
-	}
-	if err := os.Mkdir(backup, 0700); err != nil {
-		return err
-	}
-
-	err = installPayload(root, payload, backup)
-	if err != nil {
-		if rollbackErr := restoreBackup(root, stage); rollbackErr != nil {
-			return fmt.Errorf("%w\nНе удалось полностью восстановить прежнюю сборку: %v\nРезервная копия: %s", err, rollbackErr, backup)
-		}
-		return err
-	}
-	return nil
+	_ = os.RemoveAll(stage)
+	return true, launchApplication(root, nil)
 }
 
 func waitForApplication(pidArgument string) error {
@@ -117,22 +96,7 @@ func waitForApplication(pidArgument string) error {
 	return nil
 }
 
-func installPayload(root, payload, backup string) error {
-	for _, name := range payloadItems {
-		target := filepath.Join(root, name)
-		if err := os.Rename(target, filepath.Join(backup, name)); err != nil {
-			return err
-		}
-		if err := os.Rename(filepath.Join(payload, name), target); err != nil {
-			return err
-		}
-	}
-
-	// The launcher is swapped last. Its absence from the payload marks a completed transaction.
-	return replaceLauncher(filepath.Join(payload, "VPNDesktop.exe"), filepath.Join(root, "VPNDesktop.exe"))
-}
-
-func replaceLauncher(source, destination string) error {
+func moveFile(source, destination string) error {
 	moveFile := syscall.NewLazyDLL("kernel32.dll").NewProc("MoveFileExW")
 	from, err := syscall.UTF16PtrFromString(source)
 	if err != nil {
@@ -157,11 +121,25 @@ func recoverUpdates(root string) error {
 	}
 	for _, entry := range entries {
 		stage := filepath.Join(root, entry.Name())
-		if !stagePattern.MatchString(entry.Name()) || !isPlainDirectory(stage) ||
-			!isPlainDirectory(filepath.Join(stage, "backup")) {
+		if !stagePattern.MatchString(entry.Name()) || !isPlainDirectory(stage) {
 			continue
 		}
-		_, err := os.Lstat(filepath.Join(stage, "package", "VPNDesktop", "VPNDesktop.exe"))
+		recovered, err := recoverFileUpdate(root, stage)
+		if err != nil {
+			return fmt.Errorf("Не удалось восстановить прежнюю сборку из %s: %w", stage, err)
+		}
+		if recovered {
+			_ = os.RemoveAll(stage)
+			continue
+		}
+		if !isPlainDirectory(filepath.Join(stage, "backup")) {
+			entries, err := os.ReadDir(stage)
+			if err == nil && len(entries) == 1 && entries[0].Name() == "updater.exe" {
+				_ = os.RemoveAll(stage)
+			}
+			continue
+		}
+		_, err = os.Lstat(filepath.Join(stage, "package", "VPNDesktop", "VPNDesktop.exe"))
 		switch {
 		case err == nil:
 			if err := restoreBackup(root, stage); err != nil {

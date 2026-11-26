@@ -96,7 +96,9 @@ public partial class MainWindow
             && release.Version != GitHubUpdates.InstalledRelease;
         InstallUpdateButton.ToolTip = connected
             ? "Отключите VPN перед установкой."
-            : "Скачивает релиз и закрывает приложение для установки.";
+            : SelectedUpdate?.Manifest is not null
+                ? "Скачивает изменившиеся файлы. Linkway откроется после установки."
+                : "Скачивает архив сборки. Linkway откроется после установки.";
     }
 
     private async void ReleaseKillSwitch(object sender, RoutedEventArgs e) => await RunAsync(() =>
