@@ -112,6 +112,7 @@ try
         Rules =
         [
             new(RouteMatch.Domain, "primary.test", RouteProtocol.Any, new(RouteKind.Main)),
+            new(RouteMatch.Domain, "example.org", RouteProtocol.Any, new(RouteKind.Server, secondServer)),
             new(RouteMatch.DomainSuffix, "secondary.test", RouteProtocol.Tcp, new(RouteKind.Server, secondServer)),
             new(RouteMatch.Domain, "unavailable.test", RouteProtocol.Any, new(RouteKind.Server, deadServer)),
             new(RouteMatch.Domain, "blocked.test", RouteProtocol.Any, new(RouteKind.Reject)),
@@ -164,6 +165,29 @@ try
             item.Route.Contains("Same name") && item.Path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)),
             "Active connections with process, hostname, protocol and actual server");
     }
+
+    using (var connection = await OpenRequest("example.org", "/hold"))
+    {
+        int port = ((IPEndPoint)connection.Client.LocalEndPoint!).Port;
+        var observed = (Host: "", Kind: "");
+        for (int attempt = 0; attempt < 20 && observed.Host.Length == 0; attempt++)
+        {
+            var routes = await core.GetDiagnosticRoutesAsync(new Dictionary<int, byte> { [port] = 0 }, token);
+            if (routes.Length > 0)
+                observed = routes.Single();
+            else
+                await Task.Delay(50, token);
+        }
+        Require(observed == ("example.org", "через прокси (правило маршрутизации)") &&
+            (await core.GetDiagnosticRoutesAsync(new Dictionary<int, byte>(), token)).Length == 0,
+            "Diagnostic routing recognizes its own test flow and hides the selected server");
+    }
+    Require((await core.DescribeDiagnosticConfigurationAsync(token)).Contains("наборов загружено 0 из 0"),
+        "Diagnostic configuration reports verified rule counts");
+    Require(MainWindow.DescribeHttpFailure(HttpRequestError.ProxyTunnelError, null) == "ошибка HTTP CONNECT" &&
+        MainWindow.DescribeHttpFailure(HttpRequestError.SecureConnectionError, null) == "ошибка TLS" &&
+        MainWindow.DescribeHttpFailure(HttpRequestError.Unknown, HttpStatusCode.BadGateway) == "HTTP 502",
+        "Network diagnostics separate proxy, TLS and HTTP status without raw exception text");
 
     using var echo = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
     int udpPort = ((IPEndPoint)echo.Client.LocalEndPoint!).Port;

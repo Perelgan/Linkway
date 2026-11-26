@@ -34,6 +34,12 @@ internal static class WindowsProxy
             throw new IOException("Windows не приняла настройки системного прокси.");
     }
 
+    public static bool UsesLinkway(int port)
+    {
+        var current = Read();
+        return (current.Flags & 2) != 0 && current.Server == $"127.0.0.1:{port}";
+    }
+
     public static void Restore()
     {
         if (!File.Exists(JournalPath))

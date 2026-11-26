@@ -15,8 +15,6 @@ public partial class MainWindow
 {
     // Winsock uses option 31 for both IP_UNICAST_IF and IPV6_UNICAST_IF.
     private const SocketOptionName UnicastInterface = (SocketOptionName)31;
-    private static readonly Uri InternetTest = new("https://www.gstatic.com/generate_204");
-    private static readonly Uri Ipv6Test = new("https://api6.ipify.org/");
     private static readonly string SessionHistoryPath = Path.Combine(ProfileStore.DirectoryPath, "session-history.bin");
     private readonly Queue<EventEntry> journal = new();
     private readonly List<SessionEntry> history = [];
@@ -26,7 +24,7 @@ public partial class MainWindow
     private DateTimeOffset nextTrafficSample;
     private DateTimeOffset sessionStarted;
     private (long Download, long Upload) currentTraffic;
-    private string[]? diagnosticChecks;
+    private DiagnosticSnapshot? diagnostics;
 
     private sealed record EventEntry(DateTimeOffset Time, string Event);
     private sealed record SessionEntry(DateTimeOffset Start, int Seconds, string Mode, long Download, long Upload);
@@ -159,46 +157,17 @@ public partial class MainWindow
 
     private async void RunDiagnostics(object sender, RoutedEventArgs e) => await RunAsync(async () =>
     {
-        if (killSwitch is not null && session is null)
-        {
-            diagnosticChecks = ["Kill Switch: блокировка после отключения ядра активна. Сетевые запросы пропущены."];
-        }
-        else
-        {
-            DiagnosticResults.Text = "Выполняем проверку…";
-            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
-            deadline.CancelAfter(TimeSpan.FromSeconds(12));
-            var core = session;
-            using var client = new HttpClient(new HttpClientHandler
-            {
-                UseProxy = core is not null,
-                Proxy = core is null ? null : new WebProxy($"http://127.0.0.1:{core.Port}"),
-                AllowAutoRedirect = false,
-                UseCookies = false
-            });
-            var internet = Probe(() => CheckHttps(client, InternetTest, deadline.Token));
-            var ipv6 = Probe(() => CheckHttps(client, Ipv6Test, deadline.Token));
-            var dns = core is null ? Task.FromResult(false) : Probe(() => core.TestDnsAsync(deadline.Token));
-            var node = core is null ? Task.FromResult(false)
-                : Probe(async () => await core.CheckMainRouteAsync(deadline.Token) is not null);
-            bool guardActive = killSwitch is not null && core is not null;
-            var bypass = guardActive ? TestPhysicalBypassAsync(deadline.Token) : Task.FromResult<string[]>([]);
-            await Task.WhenAll(internet, ipv6, dns, node, bypass);
-            lifetime.Token.ThrowIfCancellationRequested();
-            bool tun = core is not null && TunMode.IsChecked == true;
-            diagnosticChecks =
-            [
-                $"Интернет через {(core is null ? "Windows" : "текущую конфигурацию Mihomo")}: {Status(await internet)}",
-                $"HTTPS к IPv6-сервису: {Status(await ipv6)}",
-                core is null ? "Сервер и DNS Mihomo: требуется активное подключение."
-                    : $"Сервер: {Status(await node)}. Ответ DNS Mihomo: {Status(await dns)}.",
-                tun ? $"Защита IPv4/IPv6: строгая маршрутизация TUN и перехват обычного DNS, Kill Switch {(killSwitch is null ? "выключен" : "включён")}."
-                    : "Проверка защиты: для системного перехвата IPv6 и обычного DNS нужен TUN.",
-                .. await bypass,
-                "Активная проверка обхода выполняется при включённом Kill Switch. Тайм-аут не подтверждает блокировку."
-            ];
-        }
-        DiagnosticResults.Text = string.Join(Environment.NewLine, diagnosticChecks);
+        DiagnosticResults.Text = "Выполняем проверку…";
+        var core = session;
+        bool tun = TunMode.IsChecked == true;
+        bool guard = killSwitch is not null;
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
+        deadline.CancelAfter(TimeSpan.FromSeconds(16));
+        var checks = await CollectNetworkChecksAsync(core, tun, guard, deadline.Token);
+        lifetime.Token.ThrowIfCancellationRequested();
+        diagnostics = new(DateTimeOffset.Now, tun ? "TUN" : "PROXY", guard, core is not null,
+            MihomoVersions.Active.Version.ToString(3), checks);
+        DiagnosticResults.Text = string.Join(Environment.NewLine, checks);
         RecordEvent("Диагностика завершена");
     });
 
@@ -270,23 +239,6 @@ public partial class MainWindow
         }
     }
 
-    private static async Task<bool> CheckHttps(HttpClient client, Uri address, CancellationToken token)
-    {
-        using var response = await client.GetAsync(address, HttpCompletionOption.ResponseHeadersRead, token);
-        return response.IsSuccessStatusCode;
-    }
-
-    private static async Task<bool> Probe(Func<Task<bool>> action)
-    {
-        try { return await action(); }
-        catch (Exception error) when (error is HttpRequestException or OperationCanceledException or JsonException or SocketException)
-        {
-            return false;
-        }
-    }
-
-    private static string Status(bool passed) => passed ? "есть ответ" : "нет ответа";
-
     private async void ExportDiagnostics(object sender, RoutedEventArgs e) => await RunAsync(() =>
     {
         var dialog = new SaveFileDialog { FileName = "Linkway-diagnostics.json", Filter = "JSON (*.json)|*.json", AddExtension = true };
@@ -296,10 +248,12 @@ public partial class MainWindow
             {
                 Version = GitHubUpdates.InstalledRelease.ToString(),
                 Windows = Environment.OSVersion.Version.ToString(),
-                Mode = TunMode.IsChecked == true ? "TUN" : "PROXY",
-                KillSwitch = killSwitch is not null,
-                Connected = session is not null,
-                Checks = diagnosticChecks ?? [],
+                Mode = diagnostics?.Mode ?? (TunMode.IsChecked == true ? "TUN" : "PROXY"),
+                KillSwitch = diagnostics?.KillSwitch ?? (killSwitch is not null),
+                Connected = diagnostics?.Connected ?? (session is not null),
+                CheckedAt = diagnostics?.CheckedAt,
+                Mihomo = diagnostics?.Mihomo ?? MihomoVersions.Active.Version.ToString(3),
+                Checks = diagnostics?.Checks ?? [],
                 Events = journal.ToArray()
             }, new JsonSerializerOptions { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
             File.WriteAllText(dialog.FileName, report);

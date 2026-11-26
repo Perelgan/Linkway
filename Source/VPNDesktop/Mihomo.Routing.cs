@@ -364,9 +364,70 @@ internal sealed partial class Mihomo
         return connections.OrderByDescending(item => item.Started).ToArray();
     }
 
-    public async Task<bool> TestDnsAsync(CancellationToken cancellationToken)
+    public async Task<string> DescribeDiagnosticConfigurationAsync(CancellationToken cancellationToken)
     {
-        using var response = await GetAsync("dns/query?name=www.gstatic.com&type=A", cancellationToken);
+        using var configuration = await GetAsync("configs", cancellationToken);
+        using var rules = await GetAsync("rules", cancellationToken);
+        using var feeds = await GetAsync("providers/rules", cancellationToken);
+        var liveTun = configuration.RootElement.GetProperty("tun");
+        var providers = feeds.RootElement.GetProperty("providers");
+        int loaded = currentConfig.ExpectedRuleProviders.Keys.Count(key =>
+            providers.TryGetProperty(key, out var provider) &&
+            provider.TryGetProperty("ruleCount", out var count) && count.TryGetInt32(out int size) && size > 0);
+        int ruleCount = rules.RootElement.GetProperty("rules").GetArrayLength();
+        bool tun = liveTun.GetProperty("enable").GetBoolean();
+        bool strict = liveTun.TryGetProperty("strict-route", out var strictRoute) && strictRoute.GetBoolean();
+        return $"доступны, правил {ruleCount}, наборов загружено {loaded} из {currentConfig.ExpectedRuleProviders.Count}, " +
+               (tun ? $"TUN включён, строгий маршрут {(strict ? "включён" : "выключен")}" : "TUN выключен");
+    }
+
+    public async Task<(string Host, string Kind)[]> GetDiagnosticRoutesAsync(
+        IReadOnlyDictionary<int, byte> proxyPorts, CancellationToken cancellationToken)
+    {
+        using var snapshot = await GetAsync("connections", cancellationToken);
+        if (!snapshot.RootElement.TryGetProperty("connections", out var connections) ||
+            connections.ValueKind != JsonValueKind.Array)
+            return [];
+        var routes = new List<(string Host, string Kind)>();
+        foreach (var entry in connections.EnumerateArray())
+        {
+            if (!entry.TryGetProperty("metadata", out var metadata) ||
+                !metadata.TryGetProperty("sourcePort", out var port) || !int.TryParse(port.ToString(), out int socketPort) ||
+                !proxyPorts.ContainsKey(socketPort) || !metadata.TryGetProperty("host", out var domain))
+                continue;
+            string host = domain.GetString() ?? "";
+            if (host is not ("www.gstatic.com" or "example.org" or "api6.ipify.org"))
+                continue;
+            var outbound = entry.TryGetProperty("chains", out var chain) && chain.ValueKind == JsonValueKind.Array &&
+                chain.GetArrayLength() > 0 ? chain[0].GetString() : null;
+            string? rule = entry.TryGetProperty("rule", out var type) ? type.GetString() : null;
+            routes.Add((host, DescribeDiagnosticRoute(outbound, rule)));
+        }
+        return routes.ToArray();
+    }
+
+    internal static string DescribeDiagnosticRoute(string? outbound, string? rule)
+    {
+        string policy = outbound switch
+        {
+            "DIRECT" => "напрямую",
+            "REJECT" or "REJECT-DROP" => "блокировка",
+            null or "" => "выход неизвестен",
+            _ => "через прокси"
+        };
+        string condition = rule switch
+        {
+            "RuleSet" or "RULE-SET" => "набор правил",
+            "Match" or "MATCH" => "маршрут по умолчанию",
+            null or "" => "условие неизвестно",
+            _ => "правило маршрутизации"
+        };
+        return $"{policy} ({condition})";
+    }
+
+    public async Task<bool> TestDnsAsync(bool ipv6, CancellationToken cancellationToken)
+    {
+        using var response = await GetAsync($"dns/query?name=www.gstatic.com&type={(ipv6 ? "AAAA" : "A")}", cancellationToken);
         return response.RootElement.TryGetProperty("Answer", out var answers) && answers.ValueKind == JsonValueKind.Array
             && answers.GetArrayLength() > 0;
     }
