@@ -157,12 +157,50 @@ public partial class MainWindow : Window
         SourceBox.Focus();
     }
 
-    private void NodeChanged(object sender, SelectionChangedEventArgs e)
+    private async void NodeChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (!changingList)
+        if (changingList || busy || closing || e.Source != NodesList)
+            return;
+
+        if (session is { } core && activeServer is { } previous && SelectedServer is { } target && target != previous)
         {
+            await RunAsync(() => SwitchServerAsync(core, previous, target));
+            return;
+        }
+
+        RefreshRoutingSourceView();
+        UpdateControls();
+    }
+
+    private async Task SwitchServerAsync(Mihomo core, ServerChoice previous, ServerChoice target)
+    {
+        Message.Text = "Переключаем сервер…";
+        try
+        {
+            await core.ApplyRoutingAsync(target.Source, target.Node.Name, profiles.ToArray(), routing.Active,
+                BypassLan.IsChecked == true, () =>
+                {
+                    killSwitch?.AllowTunAdapter();
+                    RememberSelectedServer(target);
+                }, lifetime.Token, clientSettings.Network);
+            activeServer = target;
+            routingEmergency = false;
+            ResetConnectionHealth();
+            UpdateActiveServerRow();
+            RecordEvent("Сервер переключён");
+            Message.Text = "Сервер переключён.";
+        }
+        catch (RoutingRecoveryException)
+        {
+            routingEmergency = true;
+            throw;
+        }
+        finally
+        {
+            if (activeServer == previous)
+                NodesList.SelectedItem = NodesList.Items.OfType<ServerChoice>().FirstOrDefault(server =>
+                    server.Source.Id == previous.Source.Id && server.Node.Name == previous.Node.Name);
             RefreshRoutingSourceView();
-            UpdateControls();
         }
     }
 
@@ -457,8 +495,7 @@ public partial class MainWindow : Window
             else
                 WindowsProxy.Enable(candidate.Port);
             lifetime.Token.ThrowIfCancellationRequested();
-            if (profile.CabinetPlanId is null)
-                Replace(profile with { Selected = selected.Name });
+            RememberSelectedServer(server);
             session = candidate;
             StartDashboardSession();
             activeServer = server;
@@ -485,6 +522,12 @@ public partial class MainWindow : Window
             finally { await candidate.DisposeAsync(); }
             throw;
         }
+    }
+
+    private void RememberSelectedServer(ServerChoice server)
+    {
+        if (server.Source.CabinetPlanId is null)
+            Replace(server.Source with { Selected = server.Node.Name });
     }
 
     private async void CheckAllServers(object sender, RoutedEventArgs e)

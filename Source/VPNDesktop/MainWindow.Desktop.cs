@@ -189,10 +189,16 @@ public partial class MainWindow
 
     private void BeginRecovery()
     {
+        ResetConnectionHealth();
+        NotifyTray("Подключение установлено.");
+    }
+
+    private void ResetConnectionHealth()
+    {
         nextHealthCheck = DateTimeOffset.UtcNow.AddSeconds(clientSettings.DeveloperMode ? 0 : 20);
         retryAt = null;
         attempts = failedHealthChecks = 0;
-        NotifyTray("Подключение установлено.");
+        runtimeLatency = null;
     }
 
     private void ScheduleRecovery()
@@ -223,6 +229,7 @@ public partial class MainWindow
 
         if (session is not { Exited: false } core || DateTimeOffset.UtcNow < nextHealthCheck)
             return;
+        var server = activeServer;
         nextHealthCheck = DateTimeOffset.UtcNow.AddSeconds(30);
         int? delay;
         checkingRecovery = true;
@@ -233,7 +240,7 @@ public partial class MainWindow
         }
         finally { checkingRecovery = false; }
 
-        if (session != core || closing || busy)
+        if (session != core || activeServer != server || closing || busy)
             return;
         runtimeLatency = delay;
         UpdateDashboardClock(activeServer);

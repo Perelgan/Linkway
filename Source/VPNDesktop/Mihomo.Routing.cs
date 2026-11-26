@@ -15,7 +15,7 @@ internal sealed partial class Mihomo
         UseCookies = false, MaxAutomaticRedirections = 5
     }) { Timeout = TimeSpan.FromSeconds(20) };
 
-    public async Task ApplyRoutingAsync(Profile source, string node, Profile[] sources, RoutingProfile profile,
+    public async Task ApplyRoutingAsync(Profile source, string node, Profile[] sources, RoutingProfile? profile,
         bool bypassLan, Action save, CancellationToken cancellationToken, NetworkOptions? network = null)
     {
         var previous = currentConfig;

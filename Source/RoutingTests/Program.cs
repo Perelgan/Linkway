@@ -508,11 +508,24 @@ try
     Require(legacyNetwork?.Strategy == ServerStrategy.Fastest,
         "Legacy settings load after removing the independent server assignment");
     var selectedServerProfile = subscriptionProfile with { Default = new(RouteKind.Direct) };
-    await core.ApplyRoutingAsync(fullSource, "Secondary", [fullSource], selectedServerProfile, false, () => { }, token,
-        legacyNetwork);
-    Require(await Request("video.youtube.test") == "secondary" && await Request("proxy.test") == "secondary" &&
+    int originalPort = core.Port;
+    bool serverSaved = false;
+    await core.ApplyRoutingAsync(fullSource, "Secondary", [fullSource], selectedServerProfile, false,
+        () => serverSaved = true, token, legacyNetwork);
+    Require(serverSaved && !core.Exited && core.Port == originalPort &&
+        await Request("video.youtube.test") == "secondary" && await Request("proxy.test") == "secondary" &&
         await Request("store.steam.test") == "primary" && await Request("127.0.0.1") == "direct",
-        "The selected connection server pins unavailable sites and preserves other configured routes");
+        "Live server switch updates unavailable sites on the same listener and preserves other configured routes");
+
+    bool serverSwitchReverted = false;
+    try
+    {
+        await core.ApplyRoutingAsync(fullSource, "Primary", [fullSource], null, false,
+            () => throw new IOException("Injected server selection save failure"), token, legacyNetwork);
+    }
+    catch (IOException error) when (error.Message.Contains("Восстановлена")) { serverSwitchReverted = true; }
+    Require(serverSwitchReverted && !core.Exited && await Request("video.youtube.test") == "secondary",
+        "A failed live server switch restores the previous server with the same running core");
 
     var manual = changedGroup with
     {
