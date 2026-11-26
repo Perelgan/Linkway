@@ -58,7 +58,7 @@ public partial class MainWindow
                         bool unavailableSites = SubscriptionRouting.IsUnavailableSitesGroup(group.Name);
                         if (unavailableSites)
                             return new SubscriptionGroupRow(group.Name,
-                                $"{UnavailableSitesServerLabel()}  ·  Назначается в списке серверов", []);
+                                $"{ConnectionServerLabel}  ·  Используется выбранный сервер подключения", []);
                         string[] members = group.Options(source).Append("DIRECT").Append("REJECT")
                             .Where(value => value != group.Name && value != RoutingConfig.Main && !subscription.IsServiceGroup(value))
                             .Distinct(StringComparer.Ordinal).ToArray();

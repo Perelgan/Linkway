@@ -272,7 +272,7 @@ internal sealed partial class RoutingConfig
                     choice = null;
                 bool unavailableSites = SubscriptionRouting.IsUnavailableSitesGroup(name);
                 bool automatic = !unavailableSites && saved is null && group.IsAutomatic;
-                var destinations = unavailableSites ? [UnavailableSitesRoute()] : automatic
+                var destinations = unavailableSites ? [AddServer(primaryServer)] : automatic
                     ? group.Options(primary).Select(ResolvePolicy).Distinct(StringComparer.Ordinal).ToArray()
                     : [saved?.Target is { } target ? ResolveTarget(target) : ResolvePolicy(choice)];
                 pending.Remove(name);
@@ -301,14 +301,6 @@ internal sealed partial class RoutingConfig
                 return policy;
             return primary.Nodes.Any(candidate => candidate.Name == name && IsRoutable(candidate))
                 ? AddServer(new(source, name)) : "REJECT";
-        }
-
-        string UnavailableSitesRoute()
-        {
-            var chosen = network?.UnavailableSitesServer;
-            return chosen is not null && catalog.TryGetValue(chosen.Source, out var configured) &&
-                configured.Nodes.Any(candidate => candidate.Name == chosen.Name && IsRoutable(candidate))
-                ? AddServer(chosen) : Main;
         }
 
         string AddServer(RouteServer server, string? alias = null)

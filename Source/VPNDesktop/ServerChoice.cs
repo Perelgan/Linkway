@@ -28,28 +28,6 @@ internal sealed class ServerChoice(Profile source, Node node) : INotifyPropertyC
     private int delay;
     private bool isConnected, showLatency;
     public int? Latency => CheckState == ServerCheckState.Available ? delay : null;
-    public bool SupportsUnavailableSites { get; private set; }
-    public bool CanAssignUnavailableSites { get; private set; }
-    public bool IsUnavailableSitesServer { get; private set; }
-
-    public void SetUnavailableSitesRole(bool supported, bool canAssign, bool assigned)
-    {
-        if (SupportsUnavailableSites != supported)
-        {
-            SupportsUnavailableSites = supported;
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(SupportsUnavailableSites)));
-        }
-        if (CanAssignUnavailableSites != canAssign)
-        {
-            CanAssignUnavailableSites = canAssign;
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanAssignUnavailableSites)));
-        }
-        if (IsUnavailableSitesServer != assigned)
-        {
-            IsUnavailableSitesServer = assigned;
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsUnavailableSitesServer)));
-        }
-    }
 
     public bool ShowLatency
     {

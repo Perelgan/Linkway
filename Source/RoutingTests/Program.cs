@@ -503,15 +503,16 @@ try
     await core.ApplyRoutingAsync(fullSource, "Primary", [fullSource], directFallback, false, () => { }, token);
     Require(await Request("127.0.0.1") == "direct", "Explicit routing profile default overrides subscription MATCH");
 
-    var unavailableOptions = new NetworkOptions(UnavailableSitesServer: secondServer);
-    await core.ApplyRoutingAsync(fullSource, "Primary", [fullSource, second], subscriptionProfile,
-        false, () => { }, token, unavailableOptions);
-    Require(await Request("video.youtube.test") == "secondary" && await Request("store.steam.test") == "primary",
-        "Dashboard server selection applies only to the unavailable-sites group");
-    await core.ApplyRoutingAsync(fullSource, "Primary", [fullSource], subscriptionProfile,
-        false, () => { }, token, unavailableOptions);
-    Require(await Request("video.youtube.test") == "primary",
-        "A removed dashboard server falls back to the main VPN");
+    var legacyNetwork = JsonSerializer.Deserialize<NetworkOptions>(
+        """{"Strategy":1,"UnavailableSitesServer":{"Source":"old","Name":"Primary"}}""");
+    Require(legacyNetwork?.Strategy == ServerStrategy.Fastest,
+        "Legacy settings load after removing the independent server assignment");
+    var selectedServerProfile = subscriptionProfile with { Default = new(RouteKind.Direct) };
+    await core.ApplyRoutingAsync(fullSource, "Secondary", [fullSource], selectedServerProfile, false, () => { }, token,
+        legacyNetwork);
+    Require(await Request("video.youtube.test") == "secondary" && await Request("proxy.test") == "secondary" &&
+        await Request("store.steam.test") == "primary" && await Request("127.0.0.1") == "direct",
+        "The selected connection server pins unavailable sites and preserves other configured routes");
 
     var manual = changedGroup with
     {

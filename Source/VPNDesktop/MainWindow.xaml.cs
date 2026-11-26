@@ -235,7 +235,6 @@ public partial class MainWindow : Window
         ConnectionHeadline.Text = hasServers ? connectionAction : "Добавить сервер";
         StatusDot.Fill = (Brush)FindResource(connected ? "Success" : killSwitch is null ? "Muted" : "StatusWarning");
         SyncDashboardMode(useTun, ProxyMode.IsEnabled);
-        UpdateUnavailableSitesRows(editable);
         UpdateDashboardDetails();
         ConnectionDetail.Content = connected ? activeServer?.Node.Name ?? "VPN подключён."
             : hasServers ? SelectedServer?.Node.Name ?? "Выберите сервер."
