@@ -272,7 +272,10 @@ internal sealed partial class RoutingConfig
                 if (choice is not null && !SubscriptionRouting.IsLocalOption(choice) &&
                     !group.Options(primary).Contains(choice, StringComparer.Ordinal))
                     choice = null;
-                string destination = saved?.Target is { } target ? ResolveTarget(target) : ResolvePolicy(choice);
+                bool automatic = saved is null && group.IsAutomatic;
+                var destinations = automatic
+                    ? group.Options(primary).Select(ResolvePolicy).Distinct(StringComparer.Ordinal).ToArray()
+                    : [saved?.Target is { } target ? ResolveTarget(target) : ResolvePolicy(choice)];
                 pending.Remove(name);
                 string alias = $"VPNDesktop-Subscription-{aliases.Count}";
                 aliases.Add(name, alias);
@@ -280,12 +283,19 @@ internal sealed partial class RoutingConfig
                     config.HiddenGroups.Add(alias);
                 else
                     config.GroupLabels.Add(alias, name);
-                config.ExpectedGroups.Add(alias, [destination]);
-                groups.Add(new Dictionary<string, object>
+                if (automatic && destinations.Length > 0)
+                    AddHealthGroup(alias, destinations, group.Type, group.TestUrl);
+                else
                 {
-                    ["name"] = alias, ["type"] = "select", ["proxies"] = new[] { destination },
-                    ["empty-fallback"] = "REJECT"
-                });
+                    if (destinations.Length == 0)
+                        destinations = ["REJECT"];
+                    config.ExpectedGroups.Add(alias, destinations);
+                    groups.Add(new Dictionary<string, object>
+                    {
+                        ["name"] = alias, ["type"] = "select", ["proxies"] = destinations,
+                        ["empty-fallback"] = "REJECT"
+                    });
+                }
                 return alias;
             }
             if (subscription?.Policies.TryGetValue(name, out string? policy) == true)
@@ -324,13 +334,15 @@ internal sealed partial class RoutingConfig
             return alias;
         }
 
-        void AddHealthGroup(string alias, string[] members, string strategy = "fallback")
+        void AddHealthGroup(string alias, string[] members, string strategy = "fallback", string? testUrl = null)
         {
+            var address = Uri.TryCreate(testUrl, UriKind.Absolute, out var url) &&
+                url.Scheme is "http" or "https" && url.Host.Length > 0 && url.UserInfo.Length == 0 ? url.AbsoluteUri : HealthUrl;
             config.ExpectedGroups.Add(alias, members);
             groups.Add(new Dictionary<string, object>
             {
                 ["name"] = alias, ["type"] = strategy, ["proxies"] = members,
-                ["url"] = HealthUrl, ["expected-status"] = "204", ["interval"] = 120,
+                ["url"] = address, ["expected-status"] = address == HealthUrl ? "204" : "*", ["interval"] = 120,
                 ["timeout"] = 5000, ["lazy"] = false, ["empty-fallback"] = "REJECT"
             });
         }

@@ -9,8 +9,9 @@ using YamlDotNet.RepresentationModel;
 namespace VPNDesktop;
 
 internal sealed record SubscriptionGroup(string Name, string[] Members, string? Preferred, bool IncludeNodes,
-    string Type, bool Hidden)
+    string Type, bool Hidden, string? TestUrl = null)
 {
+    public bool IsAutomatic => Type is "url-test" or "fallback" or "load-balance";
     public string[] Options(Profile source) => Members.Concat(IncludeNodes
             ? source.Nodes.Where(RoutingConfig.IsRoutable).Select(node => node.Name)
             : [])
@@ -112,7 +113,8 @@ internal sealed partial class SubscriptionRouting
             string preferred = ReadString(group, "default-selected");
             groups.Add(name, new(name, members, preferred.Length == 0 ? null : preferred,
                 IsEnabled(group, "include-all") || IsEnabled(group, "include-all-proxies"),
-                ReadString(group, "type").ToLowerInvariant(), IsEnabled(group, "hidden")));
+                ReadString(group, "type").ToLowerInvariant(), IsEnabled(group, "hidden"),
+                ReadString(group, "url")));
         }
         var feeds = new Dictionary<string, SubscriptionFeed>(StringComparer.Ordinal);
         if (Child(root, "rule-providers") is YamlMappingNode providers)

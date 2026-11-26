@@ -456,6 +456,36 @@ try
     await using (var unicodeCore = await Mihomo.StartAsync(unicodeSource, unicodeNode, [unicodeSource], null, false, token, scratch))
         Require(!unicodeCore.Exited, "Mihomo starts with Unicode subscription rules and server names");
 
+    string automaticYaml = $$"""
+        proxies:
+          - {name: Unavailable, type: http, server: 127.0.0.1, port: {{deadPort}}}
+          - {name: Working, type: http, server: 127.0.0.1, port: {{primary.Port}}}
+        proxy-groups:
+          - name: Automatic
+            type: url-test
+            include-all: true
+            url: http://health.test/health
+          - {name: General, type: select, proxies: [Automatic]}
+        rules: ['MATCH,General']
+        """;
+    var automaticSource = new Profile(Guid.NewGuid(), "Automatic subscription", null, automaticYaml,
+        [new Node("Unavailable", "Http"), new Node("Working", "Http")], "Working");
+    await using (var automaticCore = await Mihomo.StartAsync(automaticSource, "Working", [automaticSource], null, false, token, scratch))
+    {
+        using var handler = new HttpClientHandler { Proxy = new WebProxy(IPAddress.Loopback.ToString(), automaticCore.Port) };
+        using var browser = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(2) };
+        string? result = null;
+        for (int attempt = 0; attempt < 20 && result is null; attempt++)
+        {
+            try { result = await browser.GetStringAsync("http://web.test/page", token); }
+            catch (Exception error) when (!token.IsCancellationRequested && error is HttpRequestException or TaskCanceledException)
+            {
+                await Task.Delay(100, token);
+            }
+        }
+        Require(result == "primary", "Subscription URL-test selects the working second node through nested default routing");
+    }
+
     var subscriptionProfile = RoutingProfile.Create("From subscription");
     await core.ApplyRoutingAsync(fullSource, "Primary", [fullSource], subscriptionProfile, false, () => { }, token);
     Require(await Request("video.youtube.test") == "secondary" && await Request("store.steam.test") == "primary" &&
