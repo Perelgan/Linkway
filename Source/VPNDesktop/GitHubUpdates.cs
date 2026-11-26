@@ -10,10 +10,7 @@ using System.Text.RegularExpressions;
 
 namespace VPNDesktop;
 
-internal sealed record GitHubRelease(UpdateVersion Version, Uri Download, byte[] Digest, long Size)
-{
-    public string DisplayName => Version == GitHubUpdates.InstalledRelease ? $"{Version} (установлена)" : Version.ToString();
-}
+internal sealed record GitHubRelease(string Tag, UpdateVersion Version, Uri Download, byte[] Digest, long Size);
 
 internal static partial class GitHubUpdates
 {
@@ -22,6 +19,7 @@ internal static partial class GitHubUpdates
     private const string AssetName = "VPNDesktop-win-x64.zip";
     private const long MaxArchive = 256L * 1024 * 1024;
     private const long MaxExpanded = 512L * 1024 * 1024;
+    private static readonly string CachePath = Path.Combine(ProfileStore.DirectoryPath, "update-releases.json");
     private static readonly HttpClient Http = new(new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false });
     private static string InstallRoot => Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, ".."));
     public static Version InstalledVersion { get; } =
@@ -30,6 +28,47 @@ internal static partial class GitHubUpdates
     public static UpdateVersion InstalledRelease { get; } =
         ParseProductVersion(typeof(App).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion)
         ?? new(InstalledVersion, null);
+
+    private sealed record CachedRelease(string? Tag, string? Digest, long Size)
+    {
+        public GitHubRelease? ToRelease()
+        {
+            if (Tag is null || UpdateVersion.Parse(Tag) is not { } version || Digest is null
+                || !DigestPattern().IsMatch(Digest) || Size <= 0 || Size > MaxArchive)
+                return null;
+            return new GitHubRelease(Tag, version, new Uri($"{ReleasesUrl}/download/{Tag}/{AssetName}"),
+                Convert.FromHexString(Digest[7..]), Size);
+        }
+    }
+
+    public static GitHubRelease[] LoadCache()
+    {
+        try
+        {
+            var saved = JsonSerializer.Deserialize<CachedRelease?[]>(File.ReadAllBytes(CachePath)) ?? [];
+            return saved.Select(entry => entry?.ToRelease()).OfType<GitHubRelease>()
+                .OrderByDescending(release => release.Version).DistinctBy(release => release.Version).ToArray();
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException)
+        {
+            return [];
+        }
+    }
+
+    public static void SaveCache(GitHubRelease[] releases)
+    {
+        var saved = releases.Select(release => new CachedRelease(release.Tag,
+            "sha256:" + Convert.ToHexString(release.Digest), release.Size));
+        try
+        {
+            File.WriteAllBytes(CachePath + ".new", JsonSerializer.SerializeToUtf8Bytes(saved));
+            File.Move(CachePath + ".new", CachePath, overwrite: true);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            // The refreshed list is still available in memory.
+        }
+    }
 
     public static async Task<GitHubRelease[]> ListAsync(bool experimental, CancellationToken cancellationToken)
     {
@@ -65,21 +104,20 @@ internal static partial class GitHubUpdates
                 continue;
             bool prerelease = release.GetProperty("prerelease").GetBoolean();
             string tag = release.GetProperty("tag_name").GetString() ?? "";
-            if (UpdateVersion.Parse(tag) is not { } version || prerelease != (version.Prerelease is not null)
-                || (!experimental && prerelease))
+            if (!experimental && prerelease)
                 continue;
             var asset = release.GetProperty("assets").EnumerateArray().FirstOrDefault(item =>
                 item.GetProperty("name").GetString() == AssetName && item.GetProperty("state").GetString() == "uploaded");
             if (asset.ValueKind == JsonValueKind.Undefined)
                 continue;
             string? digest = asset.TryGetProperty("digest", out var value) ? value.GetString() : null;
-            if (digest is null || !DigestPattern().IsMatch(digest)
-                || !asset.TryGetProperty("size", out var length) || !length.TryGetInt64(out long size) || size <= 0 || size > MaxArchive)
+            if (!asset.TryGetProperty("size", out var length) || !length.TryGetInt64(out long size))
                 continue;
 
-            var url = new Uri($"{ReleasesUrl}/download/{tag}/{AssetName}");
-            if (string.Equals(asset.GetProperty("browser_download_url").GetString(), url.AbsoluteUri, StringComparison.Ordinal))
-                yield return new GitHubRelease(version, url, Convert.FromHexString(digest[7..]), size);
+            if (new CachedRelease(tag, digest, size).ToRelease() is { } build
+                && prerelease == (build.Version.Prerelease is not null)
+                && string.Equals(asset.GetProperty("browser_download_url").GetString(), build.Download.AbsoluteUri, StringComparison.Ordinal))
+                yield return build;
         }
     }
 

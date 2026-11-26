@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.IO;
+using System.Net.Http;
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 
@@ -9,8 +11,25 @@ public partial class MainWindow
 {
     private ClientSettings clientSettings = new();
     private bool settingsInitialized;
+    private GitHubRelease[] cachedBuilds = [];
+    private CancellationTokenSource? buildListRequest;
     private string? pendingUpdate;
     private WindowsKillSwitch? killSwitch;
+
+    private sealed record UpdateBuildChoice(GitHubRelease Release, bool Latest = false)
+    {
+        public string DisplayName
+        {
+            get
+            {
+                string version = Release.Version == GitHubUpdates.InstalledRelease
+                    ? $"{Release.Version} (установлена)" : Release.Version.ToString();
+                return Latest ? $"Последняя версия · {version}" : version;
+            }
+        }
+    }
+
+    private GitHubRelease? SelectedUpdate => (UpdateBuilds.SelectedItem as UpdateBuildChoice)?.Release;
 
     private void InitializeClientSettings()
     {
@@ -27,6 +46,10 @@ public partial class MainWindow
         KillSwitchToggle.IsChecked = clientSettings.KillSwitch;
         (clientSettings.ExperimentalUpdates ? ExperimentalUpdates : StableUpdates).IsChecked = true;
         AppVersionLabel.Text = $"Версия {GitHubUpdates.InstalledRelease}";
+        cachedBuilds = GitHubUpdates.LoadCache();
+        ShowCachedBuilds();
+        if (!UpdateBuilds.HasItems)
+            UpdateStatus.Text = "Выберите канал, чтобы загрузить сборки.";
         settingsInitialized = true;
     }
 
@@ -63,9 +86,8 @@ public partial class MainWindow
             : "Для режима TUN. При сбое ядра Windows удерживает блокировку до переподключения, снятия блокировки или выхода из клиента.";
         StableUpdates.IsEnabled = idle;
         ExperimentalUpdates.IsEnabled = idle;
-        CheckUpdateButton.IsEnabled = idle;
         UpdateBuilds.IsEnabled = idle && UpdateBuilds.HasItems;
-        InstallUpdateButton.IsEnabled = idle && !connected && UpdateBuilds.SelectedItem is GitHubRelease release
+        InstallUpdateButton.IsEnabled = idle && !connected && buildListRequest is null && SelectedUpdate is { } release
             && release.Version != GitHubUpdates.InstalledRelease;
         InstallUpdateButton.ToolTip = connected
             ? "Отключите VPN перед установкой."
@@ -88,25 +110,56 @@ public partial class MainWindow
         killSwitch = null;
     }
 
-    private void UpdateChannelChanged(object sender, RoutedEventArgs e)
+    private async void SelectUpdateChannel(object sender, RoutedEventArgs e)
     {
-        if (!settingsInitialized)
+        if (!settingsInitialized || busy || closing)
             return;
         var updated = clientSettings with { ExperimentalUpdates = ReferenceEquals(sender, ExperimentalUpdates) };
-        if (updated == clientSettings)
-            return;
-        UpdateBuilds.ItemsSource = null;
-        UpdateStatus.Text = "";
+        var previous = updated == clientSettings ? UpdateBuilds.SelectedItem as UpdateBuildChoice : null;
+        if (updated != clientSettings)
+        {
+            try
+            {
+                updated.Save();
+            }
+            catch (Exception)
+            {
+                Message.Text = "Не удалось сохранить канал обновлений на диск.";
+            }
+            clientSettings = updated;
+        }
+
+        using var request = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
+        buildListRequest?.Cancel();
+        buildListRequest = request;
+        ShowCachedBuilds(previous);
+        UpdateControls();
+        UpdateStatus.Text = "Проверяем список сборок на GitHub…";
         try
         {
-            updated.Save();
+            var builds = await GitHubUpdates.ListAsync(experimental: true, request.Token);
+            request.Token.ThrowIfCancellationRequested();
+            cachedBuilds = builds;
+            GitHubUpdates.SaveCache(builds);
+            ShowCachedBuilds(UpdateBuilds.SelectedItem as UpdateBuildChoice);
         }
-        catch (Exception)
+        catch (OperationCanceledException) when (request.IsCancellationRequested) { }
+        catch (Exception error) when (error is IOException or HttpRequestException or OperationCanceledException
+            or JsonException or InvalidOperationException or System.Collections.Generic.KeyNotFoundException or FormatException)
         {
-            UpdateStatus.Text = "Не удалось сохранить канал обновлений на диск.";
+            UpdateStatus.Text = UpdateBuilds.HasItems
+                ? "GitHub недоступен. Показан сохранённый список."
+                : "Не удалось загрузить сборки с GitHub. Выберите канал, чтобы повторить.";
         }
-        clientSettings = updated;
-        UpdateControls();
+        finally
+        {
+            if (ReferenceEquals(buildListRequest, request))
+            {
+                buildListRequest = null;
+                if (!closing)
+                    UpdateControls();
+            }
+        }
     }
 
     private void OpenUpdateReleases(object sender, RoutedEventArgs e)
@@ -121,25 +174,21 @@ public partial class MainWindow
         }
     }
 
-    private async void CheckForUpdates(object sender, RoutedEventArgs e) => await RunAsync(async () =>
+    private void ShowCachedBuilds(UpdateBuildChoice? previous = null)
     {
-        var selection = (UpdateBuilds.SelectedItem as GitHubRelease)?.Version;
-        UpdateStatus.Text = "Загружаем список сборок с GitHub…";
-        try
-        {
-            var builds = await GitHubUpdates.ListAsync(clientSettings.ExperimentalUpdates, lifetime.Token);
-            UpdateBuilds.ItemsSource = builds;
-            UpdateBuilds.SelectedItem = builds.FirstOrDefault(build => build.Version == selection)
-                ?? builds.FirstOrDefault(build => build.Version.CompareTo(GitHubUpdates.InstalledRelease) > 0)
-                ?? builds.FirstOrDefault(build => build.Version == GitHubUpdates.InstalledRelease);
-            ShowBuildStatus();
-        }
-        catch
-        {
-            UpdateStatus.Text = "Не удалось обновить список сборок.";
-            throw;
-        }
-    });
+        var choices = cachedBuilds
+            .Where(build => clientSettings.ExperimentalUpdates || build.Version.Prerelease is null)
+            .Select(build => new UpdateBuildChoice(build)).ToList();
+        if (choices.Count > 0)
+            choices.Insert(0, new UpdateBuildChoice(choices[0].Release, Latest: true));
+
+        UpdateBuilds.ItemsSource = choices;
+        UpdateBuilds.SelectedItem = previous is { Latest: false }
+            ? choices.FirstOrDefault(choice => !choice.Latest && choice.Release.Version == previous.Release.Version)
+                ?? choices.FirstOrDefault()
+            : choices.FirstOrDefault();
+        ShowBuildStatus();
+    }
 
     private void UpdateBuildChanged(object sender, SelectionChangedEventArgs e)
     {
@@ -151,7 +200,7 @@ public partial class MainWindow
 
     private void ShowBuildStatus()
     {
-        if (UpdateBuilds.SelectedItem is not GitHubRelease build)
+        if (SelectedUpdate is not { } build)
         {
             UpdateStatus.Text = UpdateBuilds.HasItems ? "Выберите сборку для установки." : "В этом канале пока нет доступных сборок.";
             return;
@@ -171,7 +220,7 @@ public partial class MainWindow
         string? prepared = null;
         await RunAsync(async () =>
         {
-            if (UpdateBuilds.SelectedItem is not GitHubRelease release || release.Version == GitHubUpdates.InstalledRelease
+            if (buildListRequest is not null || SelectedUpdate is not { } release || release.Version == GitHubUpdates.InstalledRelease
                 || session is not null)
                 return;
             UpdateStatus.Text = $"Загружаем сборку {release.Version}…";

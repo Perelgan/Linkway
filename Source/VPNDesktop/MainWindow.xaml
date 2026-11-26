@@ -1158,11 +1158,11 @@
                                 <TextBlock Style="{StaticResource Label}" Text="Канал обновлений"/>
                                 <UniformGrid Columns="2">
                                     <RadioButton x:Name="StableUpdates" GroupName="UpdateChannel" Style="{StaticResource ModeCard}"
-                                                 Checked="UpdateChannelChanged" Margin="0,0,6,0" AutomationProperties.Name="Стабильная версия">
+                                                 Click="SelectUpdateChannel" Margin="0,0,6,0" AutomationProperties.Name="Стабильная версия">
                                         <TextBlock Text="Стабильная версия" FontWeight="SemiBold" TextWrapping="Wrap"/>
                                     </RadioButton>
                                     <RadioButton x:Name="ExperimentalUpdates" GroupName="UpdateChannel" Style="{StaticResource ModeCard}"
-                                                 Checked="UpdateChannelChanged" Margin="6,0,0,0" AutomationProperties.Name="Экспериментальная версия">
+                                                 Click="SelectUpdateChannel" Margin="6,0,0,0" AutomationProperties.Name="Экспериментальная версия">
                                         <TextBlock Text="Экспериментальная версия" FontWeight="SemiBold" TextWrapping="Wrap"/>
                                     </RadioButton>
                                 </UniformGrid>
@@ -1173,8 +1173,6 @@
                                 <TextBlock x:Name="UpdateStatus" TextWrapping="Wrap" Foreground="{StaticResource Muted}"
                                            Margin="0,10,0,0" AutomationProperties.LiveSetting="Polite"/>
                                 <WrapPanel Margin="0,13,0,0">
-                                    <Button x:Name="CheckUpdateButton" Content="Загрузить список сборок" Click="CheckForUpdates"
-                                            Margin="0,0,8,4"/>
                                     <Button x:Name="InstallUpdateButton" Content="Установить сборку" Click="DownloadUpdate"
                                             Margin="0,0,0,4" Style="{StaticResource PrimaryButton}"
                                             ToolTipService.ShowOnDisabled="True"/>
