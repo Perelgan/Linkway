@@ -1,4 +1,5 @@
 using Microsoft.Win32;
+using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
 using System.Net;
@@ -19,8 +20,11 @@ public partial class MainWindow
     private readonly Queue<EventEntry> journal = new();
     private readonly List<SessionEntry> history = [];
     private readonly Dictionary<string, (long Download, long Upload)> observed = [];
-    private readonly Dictionary<string, (long Download, long Upload)> appTraffic = [];
-    private readonly Dictionary<string, (long Download, long Upload)> serverTraffic = [];
+    private readonly Dictionary<string, TrafficRow> appTraffic = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, TrafficRow> serverTraffic = [];
+    private readonly Dictionary<string, TrafficApplication> trafficApplications = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ObservableCollection<TrafficRow> appTrafficRows = [];
+    private readonly ObservableCollection<TrafficRow> serverTrafficRows = [];
     private DateTimeOffset nextTrafficSample;
     private DateTimeOffset sessionStarted;
     private (long Download, long Upload) currentTraffic;
@@ -50,8 +54,22 @@ public partial class MainWindow
         serverTraffic.Clear();
     }
 
-    private void AccumulateTraffic(long download, long upload, ActiveConnection[] connections)
+    private async Task AccumulateTrafficAsync(VpnSessionClient core, long download, long upload, ActiveConnection[] connections)
     {
+        var newApplications = connections.Where(connection => connection.Download > 0 || connection.Upload > 0)
+            .DistinctBy(ApplicationLookupKey, StringComparer.OrdinalIgnoreCase)
+            .Where(connection => !trafficApplications.ContainsKey(ApplicationLookupKey(connection)))
+            .Take(Math.Max(0, 512 - trafficApplications.Count)).ToArray();
+        if (newApplications.Length > 0)
+        {
+            var resolved = await Task.Run(() => newApplications.Select(connection =>
+                TrafficApplication.Resolve(connection.Process, connection.Path)).ToArray(), lifetime.Token);
+            if (session != core || closing)
+                return;
+            for (int index = 0; index < newApplications.Length; index++)
+                trafficApplications.Add(ApplicationLookupKey(newApplications[index]), resolved[index]);
+        }
+
         currentTraffic = (download, upload);
         var alive = connections.Select(connection => connection.Id).ToHashSet(StringComparer.Ordinal);
         foreach (string closed in observed.Keys.Where(id => !alive.Contains(id)).ToArray())
@@ -66,33 +84,66 @@ public partial class MainWindow
             long up = Math.Max(0, connection.Upload - previous.Upload);
             if (down == 0 && up == 0)
                 continue;
-            string app = connection.Process.Length != 0 ? connection.Process : Path.GetFileName(connection.Path);
-            Add(appTraffic, app, down, up);
-            Add(serverTraffic, connection.Outbound, down, up);
+            var app = trafficApplications.GetValueOrDefault(ApplicationLookupKey(connection));
+            Add(appTraffic, app?.Key ?? "other", app?.Name ?? "Остальные приложения", app?.Icon, down, up);
+            string outbound = connection.Outbound;
+            string label = outbound switch
+            {
+                "" => "Не определено",
+                "DIRECT" => "Напрямую",
+                "REJECT" or "REJECT-DROP" => "Заблокировано",
+                _ => outbound
+            };
+            Add(serverTraffic, outbound, label, null, down, up);
         }
         if (IsVisible && DiagnosticsNav.IsChecked == true)
             RefreshTraffic();
 
-        static void Add(Dictionary<string, (long Download, long Upload)> totals, string key, long down, long up)
+        static void Add(Dictionary<string, TrafficRow> totals, string key, string name,
+            System.Windows.Media.Imaging.BitmapSource? icon, long down, long up)
         {
-            if (key.Length == 0)
-                key = "Не определено";
             if (totals.Count >= 256 && !totals.ContainsKey(key))
+            {
                 key = "Остальные";
-            var previous = totals.GetValueOrDefault(key);
-            totals[key] = (previous.Download + down, previous.Upload + up);
+                name = "Остальные";
+                icon = null;
+            }
+            if (totals.TryGetValue(key, out var previous))
+                totals[key] = previous with { Download = previous.Download + down, Upload = previous.Upload + up, Icon = previous.Icon ?? icon };
+            else
+                totals[key] = new(name, down, up, icon);
         }
     }
 
+    private static string ApplicationLookupKey(ActiveConnection connection) =>
+        connection.Path.Length != 0 ? "path:" + connection.Path : "name:" + connection.Process;
+
     private void RefreshTraffic()
     {
-        SessionTraffic.Text = $"↓ {currentTraffic.Download:N0} Б   ↑ {currentTraffic.Upload:N0} Б";
-        AppTrafficList.ItemsSource = TrafficRows(appTraffic);
-        ServerTrafficList.ItemsSource = TrafficRows(serverTraffic);
+        var summary = new TrafficRow("Трафик за сеанс", currentTraffic.Download, currentTraffic.Upload);
+        SessionTraffic.Text = summary.Amount;
+        SessionTraffic.ToolTip = summary.Details;
+        AppTrafficList.ItemsSource ??= appTrafficRows;
+        ServerTrafficList.ItemsSource ??= serverTrafficRows;
+        UpdateRows(appTrafficRows, appTraffic.Values);
+        UpdateRows(serverTrafficRows, serverTraffic.Values);
+        AppTrafficEmpty.Visibility = appTrafficRows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        ServerTrafficEmpty.Visibility = serverTrafficRows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
 
-        static string[] TrafficRows(Dictionary<string, (long Download, long Upload)> values) =>
-            values.OrderByDescending(item => item.Value.Download + item.Value.Upload).Take(30)
-                .Select(item => $"{item.Key}   ·   ↓ {item.Value.Download:N0} Б   ↑ {item.Value.Upload:N0} Б").ToArray();
+        static void UpdateRows(ObservableCollection<TrafficRow> rows, IEnumerable<TrafficRow> values)
+        {
+            int index = 0;
+            foreach (var row in values.OrderByDescending(item => item.Download + item.Upload).ThenBy(item => item.Name))
+            {
+                if (index == rows.Count)
+                    rows.Add(row);
+                else if (rows[index] != row)
+                    rows[index] = row;
+                index++;
+            }
+            while (rows.Count > index)
+                rows.RemoveAt(rows.Count - 1);
+        }
     }
 
     private void RefreshStatistics()

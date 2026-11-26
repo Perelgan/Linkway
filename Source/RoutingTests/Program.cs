@@ -20,6 +20,23 @@ Directory.CreateDirectory(scratch);
 try
 {
     var oldSettings = JsonSerializer.Deserialize<ClientSettings>("""{"Tun":true,"Repository":"another/project","KillSwitch":true}""");
+    string trafficMain = Path.Combine(scratch, "TrafficMain.exe");
+    string trafficHelper = Path.Combine(scratch, "TrafficHelper.exe");
+    try
+    {
+        File.Copy(typeof(MainWindow).Assembly.Location, trafficMain);
+        File.Copy(typeof(MainWindow).Assembly.Location, trafficHelper);
+        var mainApp = TrafficApplication.Resolve("TrafficMain.exe", trafficMain);
+        var helperApp = TrafficApplication.Resolve("TrafficHelper.exe", trafficHelper);
+        Require(mainApp.Key == helperApp.Key && mainApp.Name == "Linkway" &&
+            TrafficApplication.Resolve("svchost.exe", "").Name == "Службы Windows",
+            "Traffic groups executables with the same application metadata and names Windows services");
+    }
+    finally
+    {
+        File.Delete(trafficMain);
+        File.Delete(trafficHelper);
+    }
     Require(oldSettings is { Tun: true, KillSwitch: true, ExperimentalUpdates: false, CloseAction: WindowCloseAction.Ask },
         "Existing settings migrate to the stable update channel");
     var closeSettings = oldSettings! with { CloseAction = WindowCloseAction.KeepVpn };

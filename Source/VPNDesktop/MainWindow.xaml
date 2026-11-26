@@ -1132,16 +1132,67 @@
                         <Border Style="{StaticResource Card}" Margin="0,0,0,15">
                             <StackPanel>
                                 <TextBlock Style="{StaticResource SectionTitle}" Text="Трафик за сеанс"/>
-                                <TextBlock x:Name="SessionTraffic" Text="↓ 0 Б   ↑ 0 Б" Margin="0,0,0,8"/>
+                                <TextBlock x:Name="SessionTraffic" Text="↓ 0 Б   ↑ 0 Б" Margin="0,0,0,14"
+                                           FontSize="18" FontWeight="SemiBold" Foreground="{DynamicResource Accent}"/>
                                 <Grid>
                                     <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
                                     <StackPanel Margin="0,0,8,0">
                                         <TextBlock Style="{StaticResource Label}" Text="По приложениям"/>
-                                        <ListBox x:Name="AppTrafficList" Style="{StaticResource DarkList}" MaxHeight="170"/>
+                                        <TextBlock x:Name="AppTrafficEmpty" Text="Пока нет данных" Foreground="{DynamicResource Muted}" Margin="0,5,0,0"/>
+                                        <ListBox x:Name="AppTrafficList" Style="{StaticResource RouteList}" ItemContainerStyle="{StaticResource RouteRow}"
+                                                 MaxHeight="280" AutomationProperties.Name="Трафик по приложениям">
+                                            <ListBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Grid ToolTip="{Binding Details}">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                            <ColumnDefinition Width="*"/>
+                                                        </Grid.ColumnDefinitions>
+                                                        <Border Width="34" Height="34" Margin="0,0,9,0" CornerRadius="8"
+                                                                Background="{DynamicResource Hover}" VerticalAlignment="Center">
+                                                            <Grid>
+                                                                <Path x:Name="FallbackAppIcon" Style="{StaticResource IconPath}"
+                                                                      Data="{StaticResource LucideDashboard}" Stroke="{DynamicResource Accent}" Visibility="Collapsed"/>
+                                                                <Image Source="{Binding Icon}" Width="24" Height="24" RenderOptions.BitmapScalingMode="HighQuality"/>
+                                                            </Grid>
+                                                        </Border>
+                                                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                                            <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" FontWeight="SemiBold"/>
+                                                            <TextBlock Text="{Binding Amount}" TextWrapping="Wrap" Margin="0,2,0,0" FontSize="12"
+                                                                       Foreground="{DynamicResource Muted}"/>
+                                                        </StackPanel>
+                                                    </Grid>
+                                                    <DataTemplate.Triggers>
+                                                        <DataTrigger Binding="{Binding Icon}" Value="{x:Null}">
+                                                            <Setter TargetName="FallbackAppIcon" Property="Visibility" Value="Visible"/>
+                                                        </DataTrigger>
+                                                    </DataTemplate.Triggers>
+                                                </DataTemplate>
+                                            </ListBox.ItemTemplate>
+                                        </ListBox>
                                     </StackPanel>
                                     <StackPanel Grid.Column="1" Margin="8,0,0,0">
                                         <TextBlock Style="{StaticResource Label}" Text="По серверам и выходам"/>
-                                        <ListBox x:Name="ServerTrafficList" Style="{StaticResource DarkList}" MaxHeight="170"/>
+                                        <TextBlock x:Name="ServerTrafficEmpty" Text="Пока нет данных" Foreground="{DynamicResource Muted}" Margin="0,5,0,0"/>
+                                        <ListBox x:Name="ServerTrafficList" Style="{StaticResource RouteList}" ItemContainerStyle="{StaticResource RouteRow}"
+                                                 MaxHeight="280" AutomationProperties.Name="Трафик по серверам и выходам">
+                                            <ListBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <DockPanel ToolTip="{Binding Details}">
+                                                        <Border DockPanel.Dock="Left" Width="34" Height="34" Margin="0,0,9,0"
+                                                                CornerRadius="8" Background="{DynamicResource Hover}" VerticalAlignment="Center">
+                                                            <Path Style="{StaticResource IconPath}" Data="{StaticResource LucideServer}"
+                                                                  Stroke="{DynamicResource Accent}"/>
+                                                        </Border>
+                                                        <StackPanel VerticalAlignment="Center">
+                                                            <ContentControl Content="{Binding Name}" ContentTemplate="{StaticResource FlaggedLabel}" FontWeight="SemiBold"/>
+                                                            <TextBlock Text="{Binding Amount}" TextWrapping="Wrap" Margin="0,2,0,0" FontSize="12"
+                                                                       Foreground="{DynamicResource Muted}"/>
+                                                        </StackPanel>
+                                                    </DockPanel>
+                                                </DataTemplate>
+                                            </ListBox.ItemTemplate>
+                                        </ListBox>
                                     </StackPanel>
                                 </Grid>
                                 <TextBlock Margin="0,8,0,0" Text="Разбивка учитывает соединения, которые Mihomo успел показать при опросе." TextWrapping="Wrap" Foreground="{DynamicResource Muted}"/>

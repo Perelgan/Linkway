@@ -180,7 +180,9 @@ public partial class MainWindow
             var (download, upload, connections) = await core.GetTrafficSnapshotAsync(lifetime.Token);
             if (session != core)
                 return;
-            AccumulateTraffic(download, upload, connections);
+            await AccumulateTrafficAsync(core, download, upload, connections);
+            if (session != core || closing)
+                return;
             double seconds = connectedFor.Elapsed.TotalSeconds;
             if (lastTraffic is { } previous && seconds > previous.Seconds)
             {

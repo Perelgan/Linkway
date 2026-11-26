@@ -42,6 +42,7 @@ internal static class UiSmoke
                     throw new InvalidOperationException("The update check button is missing.");
                 VerifySubscriptionRulesSwitch(window);
                 VerifySubscriptionGroupScrolling(window);
+                VerifyTrafficRow(window);
                 if (window.Icon is null ||
                     window.FindName("ConnectionButtonScale") is not ScaleTransform ||
                     window.FindName("SidebarSpeed") is not TextBlock ||
@@ -135,6 +136,32 @@ internal static class UiSmoke
         profiles.SelectedItem = disabled;
         if (toggle.IsChecked != false)
             throw new InvalidOperationException("The subscription rules switch does not track the selected profile.");
+    }
+
+    private static void VerifyTrafficRow(MainWindow window)
+    {
+        var list = (ListBox)window.FindName("AppTrafficList");
+        ((RadioButton)window.FindName("DiagnosticsNav")).IsChecked = true;
+        list.ItemsSource = new[] { new TrafficRow("Тестовое приложение", 2048, 1024) };
+        Render((FrameworkElement)window.Content);
+        var item = (ListBoxItem)list.ItemContainerGenerator.ContainerFromIndex(0);
+        var presenter = FindPresenter(item) ?? throw new InvalidOperationException("Traffic row was not rendered.");
+        var icon = (Path)list.ItemTemplate.FindName("FallbackAppIcon", presenter);
+        var row = (Grid)VisualTreeHelper.GetChild(presenter, 0);
+        var labels = ((StackPanel)row.Children[1]).Children.OfType<TextBlock>().ToArray();
+        if (icon.Visibility != Visibility.Visible || labels[0].Text != "Тестовое приложение" ||
+            !labels[1].Text.Contains("2 КиБ", StringComparison.Ordinal))
+            throw new InvalidOperationException("Application traffic lost its icon, label, or formatted traffic totals.");
+
+        static ContentPresenter? FindPresenter(DependencyObject parent)
+        {
+            if (parent is ContentPresenter presenter)
+                return presenter;
+            for (int index = 0; index < VisualTreeHelper.GetChildrenCount(parent); index++)
+                if (FindPresenter(VisualTreeHelper.GetChild(parent, index)) is { } child)
+                    return child;
+            return null;
+        }
     }
 
     private static void VerifyCloseActionTheme(MainWindow main)
