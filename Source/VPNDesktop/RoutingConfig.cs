@@ -6,7 +6,7 @@ using System.Text.RegularExpressions;
 
 namespace VPNDesktop;
 
-internal sealed class RoutingConfig
+internal sealed partial class RoutingConfig
 {
     public const string Main = "VPNDesktop-Selected";
     public const string MainProvider = "nodes";
@@ -63,8 +63,16 @@ internal sealed class RoutingConfig
     public string Payload(bool tun)
     {
         configuration["tun"] = Tun(tun);
-        return JsonSerializer.Serialize(configuration);
+        // Mihomo reads the payload as YAML, which rejects JSON's escaped surrogate halves.
+        return EscapedSurrogatePair().Replace(JsonSerializer.Serialize(configuration), static escape =>
+            string.Concat(escape.Groups[1].Value,
+                (char)Convert.ToInt32(escape.Groups[2].Value, 16),
+                (char)Convert.ToInt32(escape.Groups[3].Value, 16)));
     }
+
+    // Preserve escaped backslashes, including literal Unicode escape text in regular expressions.
+    [GeneratedRegex(@"(?<!\\)((?:\\\\)*)\\u([dD][89aAbB][0-9A-Fa-f]{2})\\u([dD][c-fC-F][0-9A-Fa-f]{2})")]
+    private static partial Regex EscapedSurrogatePair();
 
     public static RoutingConfig Preview(int port, int controller, string secret, string content)
     {

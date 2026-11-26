@@ -377,6 +377,29 @@ try
         Require(totals.Download >= 0 && totals.Upload >= 0, $"Mihomo verifies {strategy} members and exposes traffic counters");
     }
 
+    const string unicodeNode = @"🇪🇪 Сервер \uD83D\uDE80";
+    string unicodeYaml = $"""
+        proxies:
+          - name: '{unicodeNode}'
+            type: http
+            server: 127.0.0.1
+            port: {primary.Port}
+        rules:
+          - 'DOMAIN,unicode.test,{unicodeNode}'
+          - 'MATCH,DIRECT'
+        """;
+    var unicodeSource = new Profile(Guid.NewGuid(), "Unicode subscription", null, unicodeYaml,
+        [new Node(unicodeNode, "Http")], unicodeNode);
+    var unicodeConfig = RoutingConfig.Build(1234, 1235, "test", unicodeSource, unicodeNode,
+        [unicodeSource], null, false).Payload(false);
+    using (var payload = JsonDocument.Parse(unicodeConfig))
+        Require(unicodeConfig.Contains("🇪🇪", StringComparison.Ordinal) &&
+            payload.RootElement.GetProperty("proxy-groups")[0].GetProperty("filter").GetString() ==
+                @"\A" + System.Text.RegularExpressions.Regex.Escape(unicodeNode) + @"\z",
+            "Mihomo payload writes Unicode scalars and preserves literal escape text");
+    await using (var unicodeCore = await Mihomo.StartAsync(unicodeSource, unicodeNode, [unicodeSource], null, false, token, scratch))
+        Require(!unicodeCore.Exited, "Mihomo starts with Unicode subscription rules and server names");
+
     var subscriptionProfile = RoutingProfile.Create("From subscription");
     await core.ApplyRoutingAsync(fullSource, "Primary", [fullSource], subscriptionProfile, false, () => { }, token);
     Require(await Request("video.youtube.test") == "secondary" && await Request("store.steam.test") == "primary" &&
