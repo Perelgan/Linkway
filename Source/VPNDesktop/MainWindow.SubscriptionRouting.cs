@@ -100,9 +100,6 @@ public partial class MainWindow
 
     private void UpdateSubscriptionGroupControls(bool canEdit)
     {
-        RoutingSubscriptionToggle.Content = RoutingDraft?.UseSubscriptionRules == false ? "Включить правила" : "Отключить правила";
-        RoutingSubscriptionToggle.IsEnabled = canEdit && RoutingSource is not null;
-        RoutingSubscriptionToggle.Visibility = RoutingSource is null ? Visibility.Collapsed : Visibility.Visible;
         bool selected = RoutingSubscriptionGroups.SelectedItem is SubscriptionGroupRow;
         RoutingSubscriptionGroups.IsEnabled = canEdit;
         RoutingAddSubscriptionRule.Visibility = RoutingSubscriptionGroups.HasItems ? Visibility.Visible : Visibility.Collapsed;
@@ -114,8 +111,16 @@ public partial class MainWindow
     private void RoutingSubscriptionGroupChanged(object sender, SelectionChangedEventArgs e) =>
         UpdateSubscriptionGroupControls(!busy && !closing && routingReadable && RoutingDraft is not null);
 
-    private async void ToggleSubscriptionRouting(object sender, RoutedEventArgs e) => await EditDraftAsync(profile =>
-        SaveDraft(profile with { UseSubscriptionRules = !profile.UseSubscriptionRules }, SelectedRoutingRuleIndex));
+    private async void ToggleSubscriptionRouting(object sender, RoutedEventArgs e)
+    {
+        // The draft is shown again while RunAsync disables the editor.
+        bool enabled = RoutingSubscriptionToggle.IsChecked == true;
+        await EditDraftAsync(profile =>
+        {
+            if (profile.UseSubscriptionRules != enabled)
+                SaveDraft(profile with { UseSubscriptionRules = enabled }, SelectedRoutingRuleIndex);
+        });
+    }
 
     private void ToggleSubscriptionGroup(object sender, RoutedEventArgs e)
     {

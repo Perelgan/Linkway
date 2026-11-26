@@ -52,6 +52,8 @@ public partial class MainWindow
         RoutingDeleteProfile.IsEnabled = routing.Profiles.Length > 1 && RoutingDraft?.Id != routing.Active?.Id;
         var draft = RoutingDraft;
         bool canEdit = idle && routingReadable && draft is not null;
+        RoutingSubscriptionToggle.IsEnabled = canEdit;
+        RoutingSubscriptionToggle.IsChecked = draft?.UseSubscriptionRules == true;
         RoutingAddRule.IsEnabled = RoutingEditDefault.IsEnabled = canEdit;
         UpdateSubscriptionGroupControls(canEdit);
         int index = SelectedRoutingRuleIndex;

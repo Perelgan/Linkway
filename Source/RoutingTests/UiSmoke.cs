@@ -37,6 +37,7 @@ internal static class UiSmoke
                 }
                 if (window.FindName("CheckUpdatesButton") is not Button { Content: "Проверить обновления" })
                     throw new InvalidOperationException("The update check button is missing.");
+                VerifySubscriptionRulesSwitch(window);
                 var diagnostics = (RadioButton)window.FindName("DiagnosticsNav");
                 if (((StackPanel)diagnostics.Content).Children.OfType<Path>().Single().Stroke is null)
                     throw new InvalidOperationException("The diagnostic navigation icon has no stroke.");
@@ -49,6 +50,23 @@ internal static class UiSmoke
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
         return completion.Task;
+    }
+
+    private static void VerifySubscriptionRulesSwitch(MainWindow window)
+    {
+        ((RadioButton)window.FindName("RoutingNav")).IsChecked = true;
+        var profiles = (ComboBox)window.FindName("RoutingProfileBox");
+        var enabled = RoutingProfile.Create("Включены");
+        var disabled = RoutingProfile.Create("Выключены") with { UseSubscriptionRules = false };
+        profiles.ItemsSource = new[] { enabled, disabled };
+        var toggle = (CheckBox)window.FindName("RoutingSubscriptionToggle");
+        profiles.SelectedItem = enabled;
+        if (toggle.IsChecked != true || toggle.Visibility != Visibility.Visible ||
+            (string)toggle.Content != "Правила подписки")
+            throw new InvalidOperationException("Routing does not show the subscription rules switch as enabled.");
+        profiles.SelectedItem = disabled;
+        if (toggle.IsChecked != false)
+            throw new InvalidOperationException("The subscription rules switch does not track the selected profile.");
     }
 
     private static void VerifyRoutingDialogTheme(MainWindow main)
