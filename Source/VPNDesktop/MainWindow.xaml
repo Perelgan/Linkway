@@ -997,8 +997,13 @@
                                         Click="AssignSubscriptionGroupRule" Visibility="Collapsed"/>
                             </WrapPanel>
                             <ListBox x:Name="RoutingSubscriptionGroups" Style="{StaticResource RouteList}" ItemContainerStyle="{StaticResource RouteRow}"
-                                     MaxHeight="475" SelectionChanged="RoutingSubscriptionGroupChanged"
+                                     VirtualizingPanel.IsVirtualizing="False" SelectionChanged="RoutingSubscriptionGroupChanged"
                                      AutomationProperties.Name="Группы из подписки">
+                                <ListBox.Template>
+                                    <ControlTemplate TargetType="ListBox">
+                                        <ItemsPresenter/>
+                                    </ControlTemplate>
+                                </ListBox.Template>
                                 <ListBox.ItemTemplate>
                                     <DataTemplate>
                                         <StackPanel>
@@ -1016,27 +1021,25 @@
                                             </Button>
                                             <Border x:Name="GroupRoutes" Background="{DynamicResource Field}" CornerRadius="10"
                                                     Padding="5" Margin="7,5,7,4" Visibility="Collapsed">
-                                                <ScrollViewer MaxHeight="240" VerticalScrollBarVisibility="Auto">
-                                                    <ItemsControl ItemsSource="{Binding Options}">
-                                                        <ItemsControl.ItemTemplate>
-                                                            <DataTemplate>
-                                                                <Button Click="SelectSubscriptionRoute" Style="{StaticResource GroupRouteButton}"
-                                                                        AutomationProperties.Name="{Binding Label}">
-                                                                    <DockPanel LastChildFill="True">
-                                                                        <TextBlock x:Name="SelectedMark" DockPanel.Dock="Right" Text="✓"
-                                                                                   Foreground="{DynamicResource Accent}" Visibility="Collapsed"/>
-                                                                        <ContentControl Content="{Binding Label}" ContentTemplate="{StaticResource FlaggedLabel}" ToolTip="{Binding Label}"/>
-                                                                    </DockPanel>
-                                                                </Button>
-                                                                <DataTemplate.Triggers>
-                                                                    <DataTrigger Binding="{Binding Selected}" Value="True">
-                                                                        <Setter TargetName="SelectedMark" Property="Visibility" Value="Visible"/>
-                                                                    </DataTrigger>
-                                                                </DataTemplate.Triggers>
-                                                            </DataTemplate>
-                                                        </ItemsControl.ItemTemplate>
-                                                    </ItemsControl>
-                                                </ScrollViewer>
+                                                <ItemsControl ItemsSource="{Binding Options}">
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <Button Click="SelectSubscriptionRoute" Style="{StaticResource GroupRouteButton}"
+                                                                    AutomationProperties.Name="{Binding Label}">
+                                                                <DockPanel LastChildFill="True">
+                                                                    <TextBlock x:Name="SelectedMark" DockPanel.Dock="Right" Text="✓"
+                                                                               Foreground="{DynamicResource Accent}" Visibility="Collapsed"/>
+                                                                    <ContentControl Content="{Binding Label}" ContentTemplate="{StaticResource FlaggedLabel}" ToolTip="{Binding Label}"/>
+                                                                </DockPanel>
+                                                            </Button>
+                                                            <DataTemplate.Triggers>
+                                                                <DataTrigger Binding="{Binding Selected}" Value="True">
+                                                                    <Setter TargetName="SelectedMark" Property="Visibility" Value="Visible"/>
+                                                                </DataTrigger>
+                                                            </DataTemplate.Triggers>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
                                             </Border>
                                         </StackPanel>
                                         <DataTemplate.Triggers>

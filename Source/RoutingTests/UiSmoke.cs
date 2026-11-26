@@ -39,6 +39,7 @@ internal static class UiSmoke
                 if (window.FindName("CheckUpdatesButton") is not Button { Content: "Проверить обновления" })
                     throw new InvalidOperationException("The update check button is missing.");
                 VerifySubscriptionRulesSwitch(window);
+                VerifySubscriptionGroupScrolling(window);
                 if (window.Icon is null ||
                     window.FindName("ConnectionButtonScale") is not ScaleTransform ||
                     window.FindName("SidebarSpeed") is not TextBlock ||
@@ -58,6 +59,52 @@ internal static class UiSmoke
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
         return completion.Task;
+    }
+
+    private static void VerifySubscriptionGroupScrolling(MainWindow window)
+    {
+        const int groupCount = 18;
+        var names = Enumerable.Range(1, groupCount).Select(index => $"Group-{index}").ToArray();
+        var nodes = Enumerable.Range(1, 24).Select(index => new Node($"Server-{index}", "Vless")).ToArray();
+        string yaml = "proxy-groups:\n" + string.Join('\n', names.Select(name =>
+            $"  - {{name: {name}, type: select, include-all: true}}")) +
+            "\nrules:\n" + string.Join('\n', names.Select(name => $"  - DOMAIN,{name.ToLowerInvariant()}.test,{name}"));
+        var source = new Profile(Guid.NewGuid(), "Тест прокрутки", null, yaml, nodes, nodes[0].Name);
+        var servers = (ListBox)window.FindName("NodesList");
+        servers.ItemsSource = new[] { new ServerChoice(source, nodes[0]) };
+        servers.SelectedIndex = 0;
+        ((RadioButton)window.FindName("RoutingGroupsTab")).IsChecked = true;
+
+        var layout = (FrameworkElement)window.Content;
+        var size = new Size(window.MinWidth, window.MinHeight);
+        layout.Measure(size);
+        layout.Arrange(new Rect(size));
+        layout.UpdateLayout();
+        var page = (ScrollViewer)window.FindName("PageScroll");
+        var groups = (ListBox)window.FindName("RoutingSubscriptionGroups");
+        page.ScrollToBottom();
+        layout.UpdateLayout();
+        if (groups.Items.Count != groupCount ||
+            groups.ItemContainerGenerator.ContainerFromIndex(groupCount - 1) is not ListBoxItem lastGroup)
+            throw new InvalidOperationException("The page did not reach the last subscription group.");
+        VerifyFullyVisible(lastGroup);
+
+        groups.SelectedIndex = groupCount - 1;
+        layout.UpdateLayout();
+        page.ScrollToBottom();
+        layout.UpdateLayout();
+        if (FindBorder(lastGroup, "GroupRoutes")?.Child is not ItemsControl routes ||
+            routes.Items.Count != nodes.Length + 2 ||
+            routes.ItemContainerGenerator.ContainerFromIndex(routes.Items.Count - 1) is not FrameworkElement lastRoute)
+            throw new InvalidOperationException("The expanded group did not render the last route option.");
+        VerifyFullyVisible(lastRoute);
+
+        void VerifyFullyVisible(FrameworkElement element)
+        {
+            double top = element.TranslatePoint(new Point(0, 0), page).Y;
+            if (element.ActualHeight <= 0 || top < 0 || top + element.ActualHeight > page.ViewportHeight + 1)
+                throw new InvalidOperationException("The last item is clipped at the bottom of the routing page.");
+        }
     }
 
     private static void VerifyServerRow(MainWindow window)
