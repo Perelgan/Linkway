@@ -20,11 +20,13 @@ internal static class UiSmoke
                 Render(layout);
                 VerifyServerRow(window);
                 VerifyRoutingDialogTheme(window);
+                VerifyCloseActionTheme(window);
                 window.ApplyTheme(light: true);
                 var light = ((SolidColorBrush)window.FindResource("Surface")).Color;
                 if (dark == light || dark.R >= light.R)
                     throw new InvalidOperationException("Theme resources did not switch.");
                 VerifyRoutingDialogTheme(window);
+                VerifyCloseActionTheme(window);
                 foreach (var (nav, page) in new[]
                 {
                     ("ConnectionNav", "ConnectionPage"), ("ProfilesNav", "ProfilesPage"), ("CabinetNav", "CabinetPage"),
@@ -46,6 +48,7 @@ internal static class UiSmoke
                     window.FindName("DashboardPing") is not TextBlock { Visibility: Visibility.Collapsed } ||
                     window.FindName("DeveloperModeToggle") is not CheckBox ||
                     window.FindName("CloseActionBox") is not ComboBox ||
+                    window.FindName("AdvancedNetworkSettings") is not Expander { IsExpanded: false, Header: "Для продвинутых" } ||
                     window.FindName("CoreBuilds") is not ComboBox)
                     throw new InvalidOperationException("Connection and kernel settings controls do not match the default layout.");
                 var diagnostics = (RadioButton)window.FindName("DiagnosticsNav");
@@ -132,6 +135,30 @@ internal static class UiSmoke
         profiles.SelectedItem = disabled;
         if (toggle.IsChecked != false)
             throw new InvalidOperationException("The subscription rules switch does not track the selected profile.");
+    }
+
+    private static void VerifyCloseActionTheme(MainWindow main)
+    {
+        var body = new StackPanel();
+        var dialog = main.CreateRoutingDialog(null, "Закрытие Linkway", body);
+        try
+        {
+            var options = new[] { WindowCloseAction.Tray, WindowCloseAction.KeepVpn, WindowCloseAction.Disconnect }
+                .Select(main.CreateCloseActionOption).ToArray();
+            foreach (var option in options)
+                body.Children.Add(option);
+            options[1].IsChecked = true;
+            Render((FrameworkElement)dialog.Content);
+            var ink = ((SolidColorBrush)main.FindResource("Ink")).Color;
+            foreach (var option in options)
+            {
+                var mark = (FrameworkElement)option.Template.FindName("OptionMark", option);
+                if (((SolidColorBrush)option.Foreground).Color != ink ||
+                    (mark.Visibility == Visibility.Visible) != (option == options[1]))
+                    throw new InvalidOperationException("The close dialog lost its themed radio labels or selected marker.");
+            }
+        }
+        finally { dialog.Close(); }
     }
 
     private static void VerifyRoutingDialogTheme(MainWindow main)

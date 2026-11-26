@@ -135,6 +135,51 @@
                 </Setter.Value>
             </Setter>
         </Style>
+        <Style x:Key="CloseActionOption" TargetType="RadioButton">
+            <Setter Property="Foreground" Value="{DynamicResource Ink}"/>
+            <Setter Property="Background" Value="{DynamicResource Field}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource Line}"/>
+            <Setter Property="Padding" Value="10,7"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Border x:Name="OptionSurface" Background="Transparent" BorderBrush="Transparent"
+                                BorderThickness="1" CornerRadius="7" Padding="{TemplateBinding Padding}">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <Grid Width="17" Height="17" Margin="0,0,10,0" VerticalAlignment="Center">
+                                    <Ellipse x:Name="OptionRing" Fill="{TemplateBinding Background}"
+                                             Stroke="{DynamicResource Muted}" StrokeThickness="1.5"/>
+                                    <Ellipse x:Name="OptionMark" Width="7" Height="7"
+                                             Fill="{DynamicResource Accent}" Visibility="Collapsed"/>
+                                </Grid>
+                                <ContentPresenter Grid.Column="1" VerticalAlignment="Center" RecognizesAccessKey="True"/>
+                            </Grid>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="OptionSurface" Property="Background" Value="{DynamicResource Hover}"/>
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="OptionSurface" Property="Background" Value="{DynamicResource Selected}"/>
+                                <Setter TargetName="OptionRing" Property="Stroke" Value="{DynamicResource Accent}"/>
+                                <Setter TargetName="OptionMark" Property="Visibility" Value="Visible"/>
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="OptionSurface" Property="BorderBrush" Value="{DynamicResource Accent}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Foreground" Value="{DynamicResource Muted}"/>
+                                <Setter TargetName="OptionSurface" Property="Opacity" Value="0.65"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
         <Style x:Key="RouteTab" TargetType="RadioButton">
             <Setter Property="Foreground" Value="{DynamicResource Muted}"/>
             <Setter Property="Padding" Value="14,8"/>
@@ -1196,14 +1241,19 @@
                                     <ComboBoxItem Content="Резервирование по порядку"/>
                                     <ComboBoxItem Content="Балансировка нагрузки"/>
                                 </ComboBox>
-                                <CheckBox x:Name="FakeIpToggle" Style="{StaticResource SettingToggle}" Content="Fake-IP" Margin="0,0,0,10"/>
-                                <CheckBox x:Name="GeoRefreshToggle" Style="{StaticResource SettingToggle}" Content="Автоматически обновлять GeoIP и GeoSite" Margin="0,0,0,14"/>
-                                <TextBlock Style="{StaticResource Label}" Text="DNS по умолчанию · IP, https:// или tls://"/>
-                                <TextBox x:Name="ResolversBox" AcceptsReturn="True" Height="65" MaxLength="4096" VerticalScrollBarVisibility="Auto" Margin="0,0,0,12"/>
-                                <TextBlock Style="{StaticResource Label}" Text="DNS для доменов · домен=DNS"/>
-                                <TextBox x:Name="DomainResolversBox" AcceptsReturn="True" Height="65" MaxLength="8192" VerticalScrollBarVisibility="Auto" Margin="0,0,0,12"/>
-                                <TextBlock Style="{StaticResource Label}" Text="Наборы правил · URL | classical/domain/ipcidr | yaml/text/mrs | VPN/DIRECT/REJECT" TextWrapping="Wrap"/>
-                                <TextBox x:Name="RuleSetsBox" AcceptsReturn="True" Height="82" MaxLength="8192" VerticalScrollBarVisibility="Auto" Margin="0,0,0,12"/>
+                                <Expander x:Name="AdvancedNetworkSettings" Header="Для продвинутых"
+                                          Foreground="{DynamicResource Ink}" Margin="0,0,0,12">
+                                    <StackPanel Margin="0,12,0,0">
+                                        <CheckBox x:Name="FakeIpToggle" Style="{StaticResource SettingToggle}" Content="Fake-IP" Margin="0,0,0,10"/>
+                                        <CheckBox x:Name="GeoRefreshToggle" Style="{StaticResource SettingToggle}" Content="Автоматически обновлять GeoIP и GeoSite" Margin="0,0,0,14"/>
+                                        <TextBlock Style="{StaticResource Label}" Text="DNS по умолчанию · IP, https:// или tls://"/>
+                                        <TextBox x:Name="ResolversBox" AcceptsReturn="True" Height="65" MaxLength="4096" VerticalScrollBarVisibility="Auto" Margin="0,0,0,12"/>
+                                        <TextBlock Style="{StaticResource Label}" Text="DNS для доменов · домен=DNS"/>
+                                        <TextBox x:Name="DomainResolversBox" AcceptsReturn="True" Height="65" MaxLength="8192" VerticalScrollBarVisibility="Auto" Margin="0,0,0,12"/>
+                                        <TextBlock Style="{StaticResource Label}" Text="Наборы правил · URL | classical/domain/ipcidr | yaml/text/mrs | VPN/DIRECT/REJECT" TextWrapping="Wrap"/>
+                                        <TextBox x:Name="RuleSetsBox" AcceptsReturn="True" Height="82" MaxLength="8192" VerticalScrollBarVisibility="Auto"/>
+                                    </StackPanel>
+                                </Expander>
                                 <Button Content="Сохранить сетевые настройки" Click="SaveNetworkSettings" HorizontalAlignment="Left"/>
                             </StackPanel>
                         </Border>

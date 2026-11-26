@@ -23,12 +23,7 @@ public partial class MainWindow
 
         foreach (var action in new[] { WindowCloseAction.Tray, WindowCloseAction.KeepVpn, WindowCloseAction.Disconnect })
         {
-            var option = new RadioButton
-            {
-                Content = CloseActionLabels[(int)action], GroupName = "CloseAction", Tag = action,
-                Margin = new Thickness(0, 0, 0, 10), IsEnabled = action != WindowCloseAction.Disconnect || !backgroundUnavailable,
-                IsChecked = action == (exitRequested ? WindowCloseAction.KeepVpn : WindowCloseAction.Tray)
-            };
+            var option = CreateCloseActionOption(action);
             body.Children.Add(option);
             options.Add(option);
         }
@@ -45,7 +40,11 @@ public partial class MainWindow
         var confirm = new Button { Content = "Продолжить", IsDefault = true, Style = (Style)FindResource("PrimaryButton") };
         confirm.Click += (_, _) => dialog.DialogResult = true;
         actions.Children.Add(confirm);
-        actions.Children.Add(new Button { Content = "Отмена", IsCancel = true, Margin = new Thickness(8, 0, 0, 0) });
+        actions.Children.Add(new Button
+        {
+            Content = "Отмена", IsCancel = true, Style = (Style)FindResource(typeof(Button)),
+            Margin = new Thickness(8, 0, 0, 0)
+        });
 
         closePromptOpen = true;
         try
@@ -71,4 +70,12 @@ public partial class MainWindow
         }
         finally { closePromptOpen = false; }
     }
+
+    internal RadioButton CreateCloseActionOption(WindowCloseAction action) => new()
+    {
+        Content = CloseActionLabels[(int)action], GroupName = "CloseAction", Tag = action,
+        Style = (Style)FindResource("CloseActionOption"), Margin = new Thickness(0, 0, 0, 4),
+        IsEnabled = action != WindowCloseAction.Disconnect || !backgroundUnavailable,
+        IsChecked = action == (exitRequested ? WindowCloseAction.KeepVpn : WindowCloseAction.Tray)
+    };
 }
