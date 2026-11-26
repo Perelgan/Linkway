@@ -214,7 +214,7 @@ public partial class MainWindow
         {
             CancelPendingUpdate();
             MessageBox.Show("Не удалось запустить установщик. Текущая версия осталась на месте.",
-                "VPN Desktop", MessageBoxButton.OK, MessageBoxImage.Warning);
+                "Linkway", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
 

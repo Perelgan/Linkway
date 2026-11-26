@@ -100,7 +100,7 @@ internal static partial class RoutingProfiles
         }
         catch (JsonException)
         {
-            throw new IOException("Файл не соответствует формату профиля маршрутизации VPN Desktop.");
+            throw new IOException("Файл не соответствует формату профиля маршрутизации Linkway.");
         }
     }
 

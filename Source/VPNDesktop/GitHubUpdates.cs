@@ -200,7 +200,7 @@ internal static partial class GitHubUpdates
         foreach (string file in new[] { "VPNDesktop.exe", "README.md", "Libraries/VPNDesktop.App.exe",
                      "Libraries/VPNDesktop.dll", "Libraries/coreclr.dll", "Libraries/mihomo.exe", "Libraries/wintun.dll" })
             if (!File.Exists(Path.Combine(payload, file)))
-                throw new IOException("В архиве нет полной сборки VPN Desktop.");
+                throw new IOException("В архиве нет полной сборки Linkway.");
         if (!Directory.Exists(Path.Combine(payload, "Languages")) || !Directory.Exists(Path.Combine(payload, "Licenses")))
             throw new IOException("В архиве отсутствуют языковые ресурсы или лицензии.");
         var actualVersion = ParseProductVersion(FileVersionInfo.GetVersionInfo(Path.Combine(payload, "Libraries", "VPNDesktop.dll")).ProductVersion);

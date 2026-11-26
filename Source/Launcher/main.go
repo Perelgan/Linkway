@@ -11,13 +11,13 @@ import (
 func main() {
 	if len(os.Args) == 3 && os.Args[1] == "--install-update" {
 		if err := installUpdate(os.Args[2]); err != nil {
-			showError("Не удалось установить обновление VPN Desktop.\n\n" + err.Error())
+			showError("Не удалось установить обновление Linkway.\n\n" + err.Error())
 			os.Exit(1)
 		}
 		return
 	}
 	if err := startApplication(); err != nil {
-		showError("Не удалось запустить VPN Desktop. Убедитесь, что папка Libraries находится рядом с VPNDesktop.exe.\n\n" + err.Error())
+		showError("Не удалось запустить Linkway. Убедитесь, что папка Libraries находится рядом с VPNDesktop.exe.\n\n" + err.Error())
 		os.Exit(1)
 	}
 }
@@ -49,7 +49,7 @@ func startApplication() error {
 
 func showError(message string) {
 	messageBox := syscall.NewLazyDLL("user32.dll").NewProc("MessageBoxW")
-	title, _ := syscall.UTF16PtrFromString("VPN Desktop")
+	title, _ := syscall.UTF16PtrFromString("Linkway")
 	body, _ := syscall.UTF16PtrFromString(message)
 	messageBox.Call(0, uintptr(unsafe.Pointer(body)), uintptr(unsafe.Pointer(title)), 0x10)
 }

@@ -634,7 +634,7 @@ public partial class MainWindow : Window
         {
             CancelPendingUpdate();
             MessageBox.Show("Не удалось завершить очистку. При следующем запуске клиент повторит восстановление.",
-                "VPN Desktop", MessageBoxButton.OK, MessageBoxImage.Warning);
+                "Linkway", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
         lifetime.Dispose();
         readyToClose = true;

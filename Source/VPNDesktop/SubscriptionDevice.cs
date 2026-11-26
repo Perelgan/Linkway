@@ -12,7 +12,7 @@ internal sealed class SubscriptionDeviceException(string message) : IOException(
 
 internal static partial class SubscriptionDevice
 {
-    private const string Unsupported = "Провайдер не принял идентификатор устройства VPN Desktop. Проверьте разрешённые клиенты в кабинете.";
+    private const string Unsupported = "Провайдер не принял идентификатор устройства Linkway. Проверьте разрешённые клиенты в кабинете.";
     private const string LimitReached = "Провайдер сообщил, что лимит устройств исчерпан. Проверьте список устройств в кабинете.";
     private static readonly Lazy<Guid?> WindowsInstallation = new(ReadWindowsInstallation);
 

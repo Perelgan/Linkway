@@ -198,7 +198,7 @@ public partial class MainWindow
     {
         if (routing.Profiles.Length <= 1 || profile.Id == routing.Active?.Id)
             return;
-        if (MessageBox.Show(this, $"Удалить профиль «{profile.Name}»?", "VPN Desktop", MessageBoxButton.YesNo,
+        if (MessageBox.Show(this, $"Удалить профиль «{profile.Name}»?", "Linkway", MessageBoxButton.YesNo,
                 MessageBoxImage.Question) == MessageBoxResult.Yes)
             SaveRouting(routing with { Profiles = routing.Profiles.Where(draft => draft.Id != profile.Id).ToArray() }, null);
     });

@@ -14,7 +14,7 @@ public partial class App : Application
         instance = new Mutex(true, $@"Local\VPNDesktop-{identity.User!.Value}", out bool first);
         if (!first)
         {
-            MessageBox.Show("VPN Desktop уже запущен.", "VPN Desktop");
+            MessageBox.Show("Linkway уже запущен.", "Linkway");
             Shutdown();
             return;
         }
