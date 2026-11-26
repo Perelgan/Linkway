@@ -54,6 +54,25 @@ internal static class HostedSessionChecks
             if (await browser.GetStringAsync("http://background.test/", token) != "secondary")
                 throw new InvalidOperationException("The reattached interface could not switch the server.");
 
+            var changed = alternate with
+            {
+                BypassLan = true,
+                Network = new NetworkOptions(FakeIp: false, Resolvers: "tls://1.1.1.1",
+                    DomainResolvers: "background.test=https://1.0.0.1/dns-query"),
+                Routing = RoutingProfile.Create("Live edits") with
+                {
+                    Rules = [new(RouteMatch.Domain, "background.test", RouteProtocol.Tcp,
+                        new(RouteKind.Server, new RouteServer(RouteServer.SourceKey(source.Restore()), first.Nodes[0].Name)))]
+                }
+            };
+            using (var ui = await OpenAsync(new("apply", changed)))
+                _ = await CommitAsync<HostedConnection>(ui, confirm: true);
+            if (await browser.GetStringAsync("http://background.test/", token) != "primary" ||
+                await browser.GetStringAsync("http://unmatched.test/", token) != "secondary" ||
+                (await SendAsync<HostedAttachment>(new("attach"))).Connection?.Started != connection.Started)
+                throw new InvalidOperationException("Live routing and network edits did not preserve the background session.");
+            Console.WriteLine("PASS Routing rules and DNS settings are accepted together by the running background core");
+
             var traffic = await SendAsync<(long Download, long Upload, ActiveConnection[] Connections)>(new("traffic"));
             if (traffic.Connections is null)
                 throw new InvalidOperationException("The host did not expose traffic statistics correctly.");

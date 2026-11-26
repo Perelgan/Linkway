@@ -1129,7 +1129,7 @@
                             </StackPanel>
                         </Border>
                         <TextBlock x:Name="SettingsLocked" Visibility="Collapsed" Foreground="{DynamicResource Muted}"
-                                   Text="Чтобы изменить режим или маршрутизацию, сначала отключите VPN." TextWrapping="Wrap" Margin="0,0,0,13"/>
+                                   Text="Для смены режима PROXY/TUN сначала отключите VPN." TextWrapping="Wrap" Margin="0,0,0,13"/>
                         <Border Style="{StaticResource Card}" Margin="0,0,0,15">
                             <StackPanel>
                                 <TextBlock Style="{StaticResource SectionTitle}" Text="Режим подключения"/>
@@ -1162,7 +1162,7 @@
                             <StackPanel>
                                 <TextBlock Style="{StaticResource SectionTitle}" Text="Маршрутизация"/>
                                 <CheckBox x:Name="BypassLan" Content="Локальная сеть напрямую"
-                                          Style="{StaticResource SettingToggle}" Checked="ModeChanged" Unchecked="ModeChanged"/>
+                                          Style="{StaticResource SettingToggle}" Checked="BypassLanChanged" Unchecked="BypassLanChanged"/>
                                 <TextBlock Text="Трафик к локальным адресам проходит мимо VPN."
                                            Foreground="{DynamicResource Muted}" Margin="44,6,0,0" TextWrapping="Wrap"/>
                                 <CheckBox x:Name="KillSwitchToggle" Content="Kill Switch"

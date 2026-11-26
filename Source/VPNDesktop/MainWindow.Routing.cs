@@ -47,8 +47,10 @@ public partial class MainWindow
             ? "TUN перехватывает TCP, UDP и обычный DNS. Для правил приложений Mihomo определяет процесс по соединению."
             : "PROXY обрабатывает запросы приложений, использующих прокси. Для UDP и приложений без поддержки прокси используйте TUN.";
         RoutingEditor.IsEnabled = idle && routingReadable;
-        RoutingApply.IsEnabled = RoutingDraft is not null && (activeServer ?? SelectedServer) is not null;
-        RoutingApply.ToolTip = RoutingApply.IsEnabled ? null : "Выберите основной сервер в разделе «Подключение».";
+        RoutingApply.IsEnabled = idle && routingReadable && !backgroundUnavailable &&
+            RoutingDraft is not null && (activeServer ?? SelectedServer) is not null;
+        RoutingApply.ToolTip = backgroundUnavailable ? "Откройте Linkway с теми же правами, что и фоновый VPN."
+            : (activeServer ?? SelectedServer) is null ? "Выберите основной сервер в разделе «Подключение»." : null;
         RoutingDeleteProfile.IsEnabled = routing.Profiles.Length > 1 && RoutingDraft?.Id != routing.Active?.Id;
         var draft = RoutingDraft;
         bool canEdit = idle && routingReadable && draft is not null;
@@ -207,28 +209,19 @@ public partial class MainWindow
 
     private async void ApplyRoutingProfile(object sender, RoutedEventArgs e) => await RunAsync(async () =>
     {
-        if (RoutingDraft is not { } draft)
+        if (backgroundUnavailable || RoutingDraft is not { } draft)
             return;
         draft = RoutingProfiles.Validate(draft);
         var updated = routing with { Active = draft };
         Message.Text = "Применяем профиль маршрутизации…";
         if (session is { } core && activeServer is { } primary)
         {
-            try
-            {
-                await core.ApplyRoutingAsync(SessionConfiguration(primary, draft),
-                    () => RoutingProfiles.Save(updated), lifetime.Token);
-            }
-            catch (RoutingRecoveryException)
-            {
-                routingEmergency = true;
-                throw;
-            }
+            await ApplyLiveRoutingAsync(core, SessionConfiguration(primary, draft), () => RoutingProfiles.Save(updated));
         }
         else if (SelectedServer is { } selected)
         {
             await using (var preview = await Mihomo.StartAsync(selected.Source, selected.Node.Name, profiles.ToArray(), draft,
-                BypassLan.IsChecked == true, lifetime.Token))
+                clientSettings.DirectLan, lifetime.Token, network: clientSettings.Network))
             {
                 lifetime.Token.ThrowIfCancellationRequested();
             }

@@ -7,10 +7,26 @@ public partial class MainWindow
 {
     private bool backgroundUnavailable, pollingSession;
 
-    private HostedConfiguration SessionConfiguration(ServerChoice selected, RoutingProfile? profile) =>
-        new(HostedSource.From(selected.Source), selected.Node.Name, profiles.Select(HostedSource.From).ToArray(),
-            profile, clientSettings.Network, BypassLan.IsChecked == true,
-            TunMode.IsChecked == true, KillSwitchToggle.IsChecked == true);
+    private HostedConfiguration SessionConfiguration(ServerChoice selected, RoutingProfile? profile, ClientSettings? settings = null)
+    {
+        settings ??= clientSettings;
+        return new(HostedSource.From(selected.Source), selected.Node.Name, profiles.Select(HostedSource.From).ToArray(),
+            profile, settings.Network, settings.DirectLan, TunMode.IsChecked == true, KillSwitchToggle.IsChecked == true);
+    }
+
+    private async Task ApplyLiveRoutingAsync(VpnSessionClient core, HostedConfiguration configuration, Action save)
+    {
+        try
+        {
+            await core.ApplyRoutingAsync(configuration, save, lifetime.Token);
+            routingEmergency = false;
+        }
+        catch (RoutingRecoveryException)
+        {
+            routingEmergency = true;
+            throw;
+        }
+    }
 
     private async Task RestoreBackgroundSessionAsync()
     {

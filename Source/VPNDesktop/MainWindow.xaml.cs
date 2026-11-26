@@ -168,19 +168,12 @@ public partial class MainWindow : Window
         Message.Text = "Переключаем сервер…";
         try
         {
-            await core.ApplyRoutingAsync(SessionConfiguration(target, routing.Active),
-                () => RememberSelectedServer(target), lifetime.Token);
+            await ApplyLiveRoutingAsync(core, SessionConfiguration(target, routing.Active), () => RememberSelectedServer(target));
             activeServer = target;
-            routingEmergency = false;
             ResetConnectionHealth();
             UpdateActiveServerRow();
             RecordEvent("Сервер переключён");
             Message.Text = "Сервер переключён.";
-        }
-        catch (RoutingRecoveryException)
-        {
-            routingEmergency = true;
-            throw;
         }
         finally
         {
@@ -223,7 +216,7 @@ public partial class MainWindow : Window
         RemoveButton.IsEnabled = editableProfiles && profile is { CabinetPlanId: null };
         ImportButton.IsEnabled = SourceBox.IsEnabled = NameBox.IsEnabled = editableProfiles;
         ProxyMode.IsEnabled = TunMode.IsEnabled = editable && !killSwitch && !backgroundUnavailable;
-        BypassLan.IsEnabled = editable;
+        BypassLan.IsEnabled = idle && !backgroundUnavailable;
         ConnectButton.Visibility = connected || hasServers ? Visibility.Visible : Visibility.Collapsed;
         ServerSelection.Visibility = hasServers ? Visibility.Visible : Visibility.Collapsed;
         ConnectButton.IsEnabled = idle && !backgroundUnavailable && (connected || SelectedServer is not null);

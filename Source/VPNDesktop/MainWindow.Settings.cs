@@ -83,7 +83,7 @@ public partial class MainWindow
 
     private void UpdateSettingsControls(bool idle, bool connected)
     {
-        NetworkSettings.IsEnabled = idle && !connected && !killSwitch && !backgroundUnavailable;
+        NetworkSettings.IsEnabled = idle && !backgroundUnavailable;
         KillSwitchToggle.IsEnabled = idle && !connected && !killSwitch && !backgroundUnavailable && TunMode.IsChecked == true;
         KillSwitchRelease.IsEnabled = idle && !connected && killSwitch;
         KillSwitchRelease.Visibility = !connected && killSwitch ? Visibility.Visible : Visibility.Collapsed;
@@ -95,14 +95,13 @@ public partial class MainWindow
         ExperimentalUpdates.IsEnabled = idle;
         UpdateBuilds.IsEnabled = idle && UpdateBuilds.HasItems;
         CheckUpdatesButton.IsEnabled = idle && buildListRequest is null;
-        InstallUpdateButton.IsEnabled = idle && !backgroundUnavailable && buildListRequest is null && SelectedUpdate is { } release
+        InstallUpdateButton.IsEnabled = idle && buildListRequest is null && SelectedUpdate is { } release
             && CanInstallUpdate(release);
         UpdateCoreControls(idle, connected);
-        InstallUpdateButton.ToolTip = (connected || killSwitch) && SelectedUpdate is { } target && !SupportsBackgroundSession(target)
-            ? "Эта сборка не поддерживает фоновый VPN. Перед её установкой отключите VPN."
-            : SelectedUpdate?.Manifest is not null
+        InstallUpdateButton.ToolTip = (SelectedUpdate is { } target ? UpdateBlockReason(target) : null)
+            ?? (SelectedUpdate?.Manifest is not null
                 ? "Скачивает изменившиеся файлы. Linkway откроется после установки."
-                : "Скачивает архив сборки. Linkway откроется после установки.";
+                : "Скачивает архив сборки. Linkway откроется после установки.");
     }
 
     private async void ReleaseKillSwitch(object sender, RoutedEventArgs e) => await RunAsync(async () =>
@@ -117,9 +116,18 @@ public partial class MainWindow
     private static bool SupportsBackgroundSession(GitHubRelease release) =>
         release.Version.CompareTo(FirstBackgroundRelease) >= 0;
 
-    private bool CanInstallUpdate(GitHubRelease release) =>
-        release.Version != GitHubUpdates.InstalledRelease &&
-        ((session is null && !killSwitch) || SupportsBackgroundSession(release));
+    private string? UpdateBlockReason(GitHubRelease release)
+    {
+        if (release.Version == GitHubUpdates.InstalledRelease)
+            return $"Сборка {release.Version} уже установлена. Нажмите «Проверить обновления», чтобы обновить список.";
+        if ((session is not null || killSwitch || backgroundUnavailable) && !SupportsBackgroundSession(release))
+            return clientSettings.ExperimentalUpdates
+                ? "Для установки при активном VPN выберите beta.17 или новее."
+                : "Для обновления при активном VPN выберите экспериментальный канал.";
+        return null;
+    }
+
+    private bool CanInstallUpdate(GitHubRelease release) => UpdateBlockReason(release) is null;
 
     private async void SelectUpdateChannel(object sender, RoutedEventArgs e)
     {
@@ -219,12 +227,13 @@ public partial class MainWindow
         }
 
         var installed = GitHubUpdates.InstalledRelease;
-        UpdateStatus.Text = build.Version.CompareTo(installed) switch
+        UpdateStatus.Text = UpdateBlockReason(build) ?? (build.Version.CompareTo(installed) switch
         {
             < 0 => $"Вы выбрали более раннюю сборку {build.Version}.",
-            0 => $"Сборка {installed} уже установлена.",
-            _ => $"Готово к установке сборки {build.Version}."
-        };
+            _ => session is not null || killSwitch || backgroundUnavailable
+                ? $"Готово к установке сборки {build.Version} с сохранением VPN."
+                : $"Готово к установке сборки {build.Version}."
+        });
     }
 
     private async void DownloadUpdate(object sender, RoutedEventArgs e)
@@ -232,7 +241,7 @@ public partial class MainWindow
         string? prepared = null;
         await RunAsync(async () =>
         {
-            if (backgroundUnavailable || buildListRequest is not null || SelectedUpdate is not { } release || !CanInstallUpdate(release))
+            if (buildListRequest is not null || SelectedUpdate is not { } release || !CanInstallUpdate(release))
                 return;
             UpdateStatus.Text = $"Загружаем сборку {release.Version}…";
             var progress = new Progress<int>(percent =>
