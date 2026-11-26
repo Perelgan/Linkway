@@ -601,6 +601,7 @@ try
     Require(await Request("personal.test") == "secondary", "Explicit personal category rule works with subscription rules disabled");
     await core.ApplyRoutingAsync(first, "Same name", sources, withDirect, false, () => { }, token);
     Require(await Request("personal.test") != "direct", "Missing category fails closed");
+    await VerifyAutomaticFailoverAsync(scratch);
     Console.WriteLine("Routing integration checks passed.");
 
     async Task<string> Request(string host, bool explicitPort = false)
@@ -666,6 +667,55 @@ static Profile Source(string name, int port)
     return new(Guid.NewGuid(), name, null, yaml, [new Node(name, "Http")], name);
 }
 
+static async Task VerifyAutomaticFailoverAsync(string scratch)
+{
+    using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(3));
+    var token = deadline.Token;
+    await using var fast = new HttpEndpoint(IPAddress.Loopback, "fast");
+    await using var reserve = new HttpEndpoint(IPAddress.Loopback, "reserve", TimeSpan.FromMilliseconds(170));
+    var nodes = new[] { (Name: "Reserve", reserve.Port), (Name: "Fast", fast.Port) };
+    var source = new Profile(Guid.NewGuid(), "Automatic route", null, JsonSerializer.Serialize(new
+    {
+        proxies = nodes.Select(node => new { name = node.Name, type = "http", server = "127.0.0.1", port = node.Port })
+    }), nodes.Select(node => new Node(node.Name, "Http")).ToArray(), "Reserve");
+    await using var core = await Mihomo.StartAsync(source, "Reserve", [source], null, false, token, scratch,
+        new NetworkOptions(ServerStrategy.Fastest), "http://health.test/");
+    using var handler = new HttpClientHandler { Proxy = new WebProxy("127.0.0.1", core.Port) };
+    using var browser = new HttpClient(handler);
+
+    await WaitForStatusAsync(status => status is { Server: "Fast", Available: 2, Total: 2, Delay: > 0 }, seconds: 25);
+    Require(await browser.GetStringAsync("http://automatic.test/", token) == "fast",
+        "Automatic mode routes new traffic through the fastest server instead of the first server");
+    await fast.DisposeAsync();
+    await WaitForStatusAsync(status => status is { Server: "Reserve", Available: 1, Total: 2, Failed: ["Fast"] });
+    Require(await browser.GetStringAsync("http://automatic.test/", token) == "reserve",
+        "Mihomo switches to the available reserve on the same running proxy port");
+    await reserve.DisposeAsync();
+    await WaitForStatusAsync(status => status is { Server: null, Available: 0, Total: 2, Failed.Length: 2 });
+    Require(true, "Automatic route status reports when all servers are unavailable");
+
+    async Task WaitForStatusAsync(Func<AutomaticRouteStatus?, bool> expected, int seconds = 65)
+    {
+        using var phase = CancellationTokenSource.CreateLinkedTokenSource(token);
+        phase.CancelAfter(TimeSpan.FromSeconds(seconds));
+        AutomaticRouteStatus? status = null;
+        try
+        {
+            while (true)
+            {
+                status = await core.ReadAutomaticRouteAsync(phase.Token);
+                if (expected(status))
+                    return;
+                await Task.Delay(250, phase.Token);
+            }
+        }
+        catch (OperationCanceledException) when (phase.IsCancellationRequested)
+        {
+            throw new InvalidOperationException($"Automatic route did not reach the expected state. Last status: {JsonSerializer.Serialize(status)}");
+        }
+    }
+}
+
 static void Require(bool condition, string label)
 {
     if (!condition)
@@ -690,12 +740,14 @@ sealed class HttpEndpoint : IAsyncDisposable
     private readonly CancellationTokenSource stop = new();
     private readonly Task accept;
     private readonly string body;
+    private readonly TimeSpan responseDelay;
     public int Port { get; }
     public TaskCompletionSource HoldStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    public HttpEndpoint(IPAddress bind, string body)
+    public HttpEndpoint(IPAddress bind, string body, TimeSpan responseDelay = default)
     {
         this.body = body;
+        this.responseDelay = responseDelay;
         listener = new TcpListener(bind, 0);
         listener.Start();
         Port = ((IPEndPoint)listener.LocalEndpoint).Port;
@@ -731,6 +783,8 @@ sealed class HttpEndpoint : IAsyncDisposable
                 HoldStarted.TrySetResult();
                 await Task.Delay(Timeout.InfiniteTimeSpan, ct);
             }
+            if (responseDelay > TimeSpan.Zero)
+                await Task.Delay(responseDelay, ct);
             await stream.WriteAsync(Encoding.ASCII.GetBytes($"HTTP/1.1 200 OK\r\nContent-Length: {body.Length}\r\nConnection: close\r\n\r\n{body}"), ct);
 
             async Task<string> ReadHeaders()

@@ -29,6 +29,7 @@ internal sealed partial class RoutingConfig
     };
     public List<string> Rules { get; } = [];
     public HashSet<string> GeoFiles { get; } = [];
+    public bool UsesAutomaticServerSelection { get; private init; }
 
     private RoutingConfig(int port, int controller, string secret)
     {
@@ -117,10 +118,14 @@ internal sealed partial class RoutingConfig
     }
 
     public static RoutingConfig Build(int port, int controller, string secret, Profile primary, string node,
-        IEnumerable<Profile> sources, RoutingProfile? profile, bool bypassLan, NetworkOptions? network = null)
+        IEnumerable<Profile> sources, RoutingProfile? profile, bool bypassLan, NetworkOptions? network = null,
+        string? automaticTestUrl = null)
     {
         profile = profile is null ? RoutingProfile.Create("Основной") : RoutingProfiles.Upgrade(profile);
-        var config = new RoutingConfig(port, controller, secret);
+        var config = new RoutingConfig(port, controller, secret)
+        {
+            UsesAutomaticServerSelection = network?.Strategy == ServerStrategy.Fastest
+        };
         var catalog = Catalog(sources.Prepend(primary));
         var providers = new Dictionary<string, object>();
         var groups = new List<object>();
@@ -141,12 +146,13 @@ internal sealed partial class RoutingConfig
             var members = primary.Nodes.Where(IsRoutable).Select(candidate => candidate.Name)
                 .Prepend(node).Distinct(StringComparer.Ordinal).Take(64)
                 .Select(name => AddServer(new RouteServer(source, name))).ToArray();
+            bool automatic = config.UsesAutomaticServerSelection;
             AddHealthGroup(Main, members, network.Strategy switch
             {
                 ServerStrategy.Fastest => "url-test",
                 ServerStrategy.Balance => "load-balance",
                 _ => "fallback"
-            });
+            }, automatic ? automaticTestUrl : null, interval: automatic ? 30 : 120, tolerance: automatic ? 50 : null);
         }
         else
             AddServer(primaryServer, Main);
@@ -333,17 +339,21 @@ internal sealed partial class RoutingConfig
             return alias;
         }
 
-        void AddHealthGroup(string alias, string[] members, string strategy = "fallback", string? testUrl = null)
+        void AddHealthGroup(string alias, string[] members, string strategy = "fallback", string? testUrl = null,
+            int interval = 120, int? tolerance = null)
         {
             var address = Uri.TryCreate(testUrl, UriKind.Absolute, out var url) &&
                 url.Scheme is "http" or "https" && url.Host.Length > 0 && url.UserInfo.Length == 0 ? url.AbsoluteUri : HealthUrl;
             config.ExpectedGroups.Add(alias, members);
-            groups.Add(new Dictionary<string, object>
+            var group = new Dictionary<string, object>
             {
                 ["name"] = alias, ["type"] = strategy, ["proxies"] = members,
-                ["url"] = address, ["expected-status"] = address == HealthUrl ? "204" : "*", ["interval"] = 120,
+                ["url"] = address, ["expected-status"] = address == HealthUrl ? "204" : "*", ["interval"] = interval,
                 ["timeout"] = 5000, ["lazy"] = false, ["empty-fallback"] = "REJECT"
-            });
+            };
+            if (tolerance is int milliseconds)
+                group["tolerance"] = milliseconds;
+            groups.Add(group);
         }
 
         string ResolveTarget(RouteTarget target) => target.Kind switch

@@ -115,7 +115,6 @@ public partial class MainWindow
         if (server is not null)
             DashboardSubscription.Text += clientSettings.Network?.Strategy switch
             {
-                ServerStrategy.Fastest => " · Автовыбор",
                 ServerStrategy.Fallback => " · Резервирование",
                 ServerStrategy.Balance => " · Балансировка",
                 _ => ""
@@ -129,8 +128,9 @@ public partial class MainWindow
         DashboardSession.Text = connectedFor.IsRunning
             ? $"Время сеанса {SessionElapsed:hh\\:mm\\:ss}" : "";
         DashboardSession.Visibility = connectedFor.IsRunning ? Visibility.Visible : Visibility.Collapsed;
-        DashboardPing.Visibility = clientSettings.DeveloperMode ? Visibility.Visible : Visibility.Collapsed;
-        if (clientSettings.DeveloperMode)
+        bool showPing = clientSettings.DeveloperMode && !(AutomaticServerEnabled && session?.AutomaticStatusSupported == true);
+        DashboardPing.Visibility = showPing ? Visibility.Visible : Visibility.Collapsed;
+        if (showPing)
         {
             int? delay = connectedFor.IsRunning ? runtimeLatency : server?.Latency;
             DashboardPing.Text = delay is int milliseconds ? $"Пинг {milliseconds} мс" : "Пинг —";

@@ -38,6 +38,7 @@ public partial class MainWindow
         else
             updated.Save();
         clientSettings = updated;
+        UpdateActiveServerRow();
         Message.Text = session is null ? "Сетевые настройки сохранены для следующего подключения."
             : "Сетевые настройки применены к текущему подключению.";
     }

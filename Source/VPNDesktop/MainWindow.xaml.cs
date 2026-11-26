@@ -91,10 +91,11 @@ public partial class MainWindow : Window
     {
         var active = activeServer;
         var route = active is not null ? RouteServer.From(active) : null;
+        string? activeName = AutomaticServerEnabled ? automaticRoute?.Server : route?.Name;
         foreach (var server in NodesList.Items.OfType<ServerChoice>())
         {
             server.ShowLatency = clientSettings.DeveloperMode;
-            server.IsConnected = route is not null && server.Node.Name == route.Name &&
+            server.IsConnected = route is not null && server.Node.Name == activeName &&
                 RouteServer.SourceKey(server.Source) == route.Source && server.Source.Content == active?.Source.Content;
         }
     }
@@ -253,13 +254,20 @@ public partial class MainWindow : Window
         ConnectionHeadline.Text = hasServers ? connectionAction : "Добавить сервер";
         StatusDot.Fill = (Brush)FindResource(connected ? "Success" : killSwitch || backgroundUnavailable ? "StatusWarning" : "Muted");
         SyncDashboardMode(useTun, ProxyMode.IsEnabled);
+        UpdateAutomaticServerControls(idle);
         UpdateDashboardDetails();
-        ConnectionDetail.Content = connected ? activeServer?.Node.Name ?? "VPN подключён."
-            : hasServers ? SelectedServer?.Node.Name ?? "Выберите сервер."
-            : "Вставьте ключ подключения или ссылку на подписку.";
+        UpdateConnectionDetail(connected, hasServers);
         UpdateTray();
         ProfileInfo.Text = profile is null ? "Источников пока нет."
             : $"{(profile.Subscription is null ? "Ключ" : "Подписка")} · Серверов: {profile.Nodes.Count(node => node.IsServer)}";
+    }
+
+    private void UpdateConnectionDetail(bool connected, bool hasServers)
+    {
+        ConnectionDetail.Content = connected && AutomaticServerEnabled ? automaticRoute?.Server ?? "Автовыбор сервера"
+            : connected ? activeServer?.Node.Name ?? "VPN подключён."
+            : hasServers ? SelectedServer?.Node.Name ?? "Выберите сервер."
+            : "Вставьте ключ подключения или ссылку на подписку.";
     }
 
     private async Task RunAsync(Func<Task> action)

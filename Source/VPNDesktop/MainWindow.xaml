@@ -743,6 +743,13 @@
                                         <RadioButton x:Name="DashboardTun" Content="TUN" GroupName="DashboardMode" Style="{StaticResource RouteTab}" Checked="DashboardModeChanged"/>
                                     </WrapPanel>
                                     <TextBlock x:Name="DashboardSubscription" TextTrimming="CharacterEllipsis" FontWeight="SemiBold"/>
+                                    <CheckBox x:Name="AutomaticServerToggle" Style="{StaticResource SettingToggle}"
+                                              Content="Автовыбор по задержке" Margin="0,8,0,0"
+                                              ToolTip="Выбирать доступный сервер из выбранного источника и переключаться при сбое."
+                                              Click="AutomaticServerChanged"/>
+                                    <TextBlock x:Name="AutomaticServerStatus" Foreground="{DynamicResource Muted}"
+                                               Margin="0,4,0,3" TextWrapping="Wrap" Visibility="Collapsed"
+                                               AutomationProperties.LiveSetting="Polite"/>
                                     <TextBlock x:Name="DashboardSession" Margin="0,4,0,3" Foreground="{DynamicResource Muted}"/>
                                     <TextBlock x:Name="DashboardPing" Visibility="Collapsed" Foreground="{DynamicResource Muted}"/>
                                     <local:TrafficChart x:Name="DashboardChart" Height="54" Margin="0,6,0,0"
@@ -1288,7 +1295,7 @@
                                 <TextBlock Style="{StaticResource Label}" Text="Серверы выбранного источника"/>
                                 <ComboBox x:Name="ServerStrategyBox" Style="{StaticResource RoutingSelect}" Margin="0,0,0,12">
                                     <ComboBoxItem Content="Выбранный сервер"/>
-                                    <ComboBoxItem Content="Наименьшая задержка"/>
+                                    <ComboBoxItem Content="Автовыбор по задержке и резервирование"/>
                                     <ComboBoxItem Content="Резервирование по порядку"/>
                                     <ComboBoxItem Content="Балансировка нагрузки"/>
                                 </ComboBox>
