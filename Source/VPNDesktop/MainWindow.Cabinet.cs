@@ -222,8 +222,11 @@ public partial class MainWindow
                 ConnectionNav.IsChecked = true;
 
             int count = loaded.Sum(profile => profile.Nodes.Length);
-            SetCabinetStatus(unavailable > 0 ? $"Серверов в списке: {count}. Не удалось обновить подписок: {unavailable}."
-                : count > 0 ? $"Серверов из аккаунта: {count}." : "В аккаунте нет активных подписок.");
+            string status = unavailable > 0 ? $"Серверов в списке: {count}. Не удалось обновить подписок: {unavailable}."
+                : count > 0 ? $"Серверов из аккаунта: {count}." : "В аккаунте нет активных подписок.";
+            if (loaded.Count == 1)
+                status += $" {SubscriptionRuleSummary(loaded[0])}";
+            SetCabinetStatus(status);
             if (deviceError is not null)
                 SetCabinetStatus($"{deviceError} Рабочих серверов в списке: {count}.");
         }

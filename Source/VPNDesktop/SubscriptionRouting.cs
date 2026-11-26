@@ -73,6 +73,15 @@ internal sealed partial class SubscriptionRouting
         return result.Value;
     }
 
+    public static bool HasRules(string content)
+    {
+        try { return Parse(content) is not null; }
+        catch (Exception error) when (error is YamlException or ArgumentException or InvalidOperationException or IOException)
+        {
+            return false;
+        }
+    }
+
     private static SubscriptionRouting? Parse(string content)
     {
         if (!MayHaveRouting(content))
@@ -105,9 +114,6 @@ internal sealed partial class SubscriptionRouting
                 IsEnabled(group, "include-all") || IsEnabled(group, "include-all-proxies"),
                 ReadString(group, "type").ToLowerInvariant(), IsEnabled(group, "hidden")));
         }
-        if (groups.Count == 0)
-            return null;
-
         var feeds = new Dictionary<string, SubscriptionFeed>(StringComparer.Ordinal);
         if (Child(root, "rule-providers") is YamlMappingNode providers)
             foreach (var (key, value) in providers.Children)
@@ -135,9 +141,11 @@ internal sealed partial class SubscriptionRouting
         return rules.Length == 0 ? null : new(groups, feeds, policies, rules);
     }
 
-    public static bool MayHaveRouting(string content) =>
-        content.Contains("proxy-groups", StringComparison.Ordinal) &&
-        content.Contains("rules", StringComparison.Ordinal);
+    private static bool MayHaveRouting(string content) =>
+        content.Contains("rules", StringComparison.Ordinal) && RoutingSectionPattern().IsMatch(content);
+
+    [GeneratedRegex("""(?m)(?:^|[,{])\s*['"]?rules['"]?\s*:""")]
+    private static partial Regex RoutingSectionPattern();
 
     private static YamlNode? Child(YamlMappingNode map, string key) =>
         map.Children.TryGetValue(new YamlScalarNode(key), out var value) ? value : null;

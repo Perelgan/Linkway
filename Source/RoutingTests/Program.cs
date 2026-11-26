@@ -277,9 +277,46 @@ try
     Require(parsed!.Groups.Keys.Where(parsed.IsVisibleGroup).SequenceEqual(["YouTube", "Steam", "Остальные сайты"]) &&
         parsed.IsServiceGroup("PROXY") && parsed.IsServiceGroup("Fastest") && parsed.IsServiceGroup("Internal"),
         "Only categories that expose manual selection appear in the interface");
-    Require(Subscription.CabinetMihomoAddress(new Uri("https://example.test/sub/id?key=value"))?.PathAndQuery ==
-        "/sub/id/mihomo?key=value" && Subscription.CabinetMihomoAddress(new Uri("https://example.test/sub/id/mihomo")) is null,
-        "Cabinet can request the full format without changing the subscription host");
+    var subscriptionUrl = new Uri("https://example.test/sub/id?key=value");
+    Require(Subscription.RoutingAddresses(subscriptionUrl).Select(uri => uri.PathAndQuery)
+        .SequenceEqual(["/sub/id/mihomo?key=value", "/sub/id/clash?key=value"]) &&
+        Subscription.RoutingAddresses(new Uri("https://example.test/sub/id/mihomo")).Single().AbsolutePath == "/sub/id/clash" &&
+        Subscription.RoutingAddresses(new Uri("https://example.test/sub/id/json")).First().AbsolutePath == "/sub/id/mihomo",
+        "Format endpoints preserve the subscription address and replace explicit format suffixes");
+    const string nodesOnly = "proxies: []";
+    var formatRequests = new List<string>();
+    var fullDownload = await Subscription.DownloadWithRoutingAsync(subscriptionUrl, token, true, null, (uri, ct, registerDevice) =>
+    {
+        ct.ThrowIfCancellationRequested();
+        formatRequests.Add(uri.AbsolutePath);
+        if (!registerDevice || uri.Host != subscriptionUrl.Host || uri.Query != subscriptionUrl.Query)
+            throw new InvalidOperationException("Subscription request lost its device context or source URL.");
+        if (uri.AbsolutePath.EndsWith("/mihomo"))
+            throw new IOException("Format not available.");
+        return Task.FromResult(new Subscription.Downloaded(uri.AbsolutePath.EndsWith("/clash") ? yaml : nodesOnly,
+            uri == subscriptionUrl ? "Subscription title" : null));
+    });
+    Require(SubscriptionRouting.HasRules(fullDownload.Content) && fullDownload.Title == "Subscription title" &&
+        formatRequests.SequenceEqual(["/sub/id", "/sub/id/mihomo", "/sub/id/clash"]),
+        "A partial response tries both formats and preserves the original title");
+    var encodedRules = await Subscription.DownloadWithRoutingAsync(subscriptionUrl, token, false, null, (uri, _, _) =>
+        uri == subscriptionUrl ? Task.FromResult(new Subscription.Downloaded(encoded.Content, null))
+            : throw new InvalidOperationException("A complete encoded response needs no fallback."));
+    Require(SubscriptionRouting.HasRules(encodedRules.Content) && SubscriptionRouting.HasRules("rules: ['MATCH,DIRECT']"),
+        "Encoded subscriptions and YAML rules without groups are recognized");
+    var partial = await Subscription.DownloadWithRoutingAsync(subscriptionUrl, token, false, null,
+        (_, _, _) => Task.FromResult(new Subscription.Downloaded(nodesOnly, null)));
+    Require(partial.Content == nodesOnly, "Initially importing a server-only subscription still works");
+    try
+    {
+        await Subscription.DownloadWithRoutingAsync(subscriptionUrl, token, false, yaml,
+            (_, _, _) => Task.FromResult(new Subscription.Downloaded(nodesOnly, null)));
+        throw new InvalidOperationException("The saved full subscription would have been discarded.");
+    }
+    catch (IOException error) when (error.Message.Contains("Сохранена", StringComparison.Ordinal))
+    {
+        Console.WriteLine("PASS A partial update preserves the last complete subscription");
+    }
     const string providerTitle = "Мой VPN ⚡";
     string encodedTitle = "base64:" + Convert.ToBase64String(Encoding.UTF8.GetBytes(providerTitle));
     Require(Subscription.ReadTitle(encodedTitle) == providerTitle && Subscription.ReadTitle("  Demo VPN  ") == "Demo VPN" &&

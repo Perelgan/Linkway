@@ -276,7 +276,7 @@ public partial class MainWindow : Window
         }
         Message.Text = "Импортируем серверы…";
         var address = Subscription.TryGetAddress(input, out var uri) ? uri : null;
-        var downloaded = address is null ? null : await Subscription.DownloadAsync(address, lifetime.Token);
+        var downloaded = address is null ? null : await Subscription.DownloadWithRoutingAsync(address, lifetime.Token);
         string content = downloaded?.Content ?? input;
         Node[] nodes = await ReadNodesAsync(content);
         string name = NameBox.Text.Trim();
@@ -287,7 +287,8 @@ public partial class MainWindow : Window
         Commit([.. profiles, profile], profile.Id);
         SourceBox.Clear();
         NameBox.Clear();
-        Message.Text = $"Добавлено серверов: {nodes.Length}.";
+        Message.Text = $"Добавлено серверов: {nodes.Length}." +
+            (address is null ? "" : $" {SubscriptionRuleSummary(profile)}");
         if (returnAfterDashboardImport)
         {
             ConnectionNav.IsChecked = true;
@@ -308,7 +309,7 @@ public partial class MainWindow : Window
         Message.Text = "Загружаем подписку…";
         var updated = await FetchSubscriptionAsync(profile, address);
         Replace(updated);
-        Message.Text = $"Подписка обновлена. Серверов в списке: {updated.Nodes.Length}.";
+        Message.Text = $"Подписка обновлена. Серверов: {updated.Nodes.Length}. {SubscriptionRuleSummary(updated)}";
     });
 
     private async void RefreshSubscriptions(object sender, RoutedEventArgs e) => await RunAsync(async () =>
@@ -349,31 +350,24 @@ public partial class MainWindow : Window
 
     private async Task<Profile> FetchSubscriptionAsync(Profile profile, string address)
     {
-        var uri = new Uri(address);
-        bool registerDevice = profile.CabinetPlanId is not null;
-        var downloaded = await Subscription.DownloadAsync(uri, lifetime.Token, registerDevice);
-        var received = profile with { Content = downloaded.Content };
-        if (profile.CabinetPlanId is not null && Subscription.CabinetMihomoAddress(uri) is { } mihomo &&
-            !SubscriptionRouting.MayHaveRouting(downloaded.Content))
-        {
-            try
-            {
-                var full = await Subscription.DownloadAsync(mihomo, lifetime.Token, registerDevice);
-                if (SubscriptionRouting.MayHaveRouting(full.Content))
-                    return await WithNodesAsync(received with { Content = full.Content });
-            }
-            catch (IOException)
-            {
-                // Keep the response from the original link when the format endpoint isn't available.
-            }
-        }
-        return await WithNodesAsync(received);
+        var downloaded = await Subscription.DownloadWithRoutingAsync(new Uri(address), lifetime.Token,
+            registerDevice: profile.CabinetPlanId is not null, previousContent: profile.Content);
+        var nodes = await ReadNodesAsync(downloaded.Content);
+        var selected = nodes.FirstOrDefault(node => node.Name == profile.Selected) ?? nodes[0];
+        return profile with { Content = downloaded.Content, Nodes = nodes, Selected = selected.Name };
+    }
 
-        async Task<Profile> WithNodesAsync(Profile source)
+    private static string SubscriptionRuleSummary(Profile source)
+    {
+        try
         {
-            var nodes = await ReadNodesAsync(source.Content);
-            var selected = nodes.FirstOrDefault(node => node.Name == profile.Selected) ?? nodes[0];
-            return source with { Nodes = nodes, Selected = selected.Name };
+            return SubscriptionRouting.Read(source) is { } subscription
+                ? $"Правил подписки: {subscription.Rules.Length}, наборов: {subscription.Feeds.Count}."
+                : "Сервер вернул список узлов без правил.";
+        }
+        catch (IOException error)
+        {
+            return error.Message;
         }
     }
 

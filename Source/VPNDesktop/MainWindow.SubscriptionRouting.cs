@@ -46,7 +46,7 @@ public partial class MainWindow
         string status = "Выберите основной сервер в разделе «Подключение».";
         if (source is not null)
         {
-            status = $"В источнике «{source.Name}» нет групп с правилами. Для категорий нужна полная подписка Mihomo.";
+            status = $"В источнике «{source.Name}» нет правил подписки. Для категорий нужна полная конфигурация Mihomo.";
             try
             {
                 if (SubscriptionRouting.Read(source) is { } subscription)
@@ -83,10 +83,10 @@ public partial class MainWindow
                             .ToArray();
                         return new SubscriptionGroupRow(group.Name, count > 0 ? $"{label}  ·  Правил: {count}" : label, options);
                     }).ToArray();
-                    status = rows.Length == 0 ? $"В источнике «{source.Name}» нет групп с ручным выбором маршрута."
-                        : draft?.UseSubscriptionRules == false
-                        ? $"Источник «{source.Name}». Правила подписки отключены в этом профиле."
-                        : $"Источник «{source.Name}». Нажмите на группу, чтобы раскрыть маршруты.";
+                    status = $"Источник «{source.Name}». Правил подписки: {subscription.Rules.Length}, наборов: {subscription.Feeds.Count}. " +
+                        (draft?.UseSubscriptionRules == false ? "Правила подписки отключены в этом профиле."
+                            : rows.Length == 0 ? "В подписке нет групп с ручным выбором маршрута."
+                            : "Нажмите на группу, чтобы раскрыть маршруты.");
                 }
             }
             catch (IOException error) { status = error.Message; }
@@ -101,7 +101,7 @@ public partial class MainWindow
     private void UpdateSubscriptionGroupControls(bool canEdit)
     {
         RoutingSubscriptionToggle.Content = RoutingDraft?.UseSubscriptionRules == false ? "Включить правила" : "Отключить правила";
-        RoutingSubscriptionToggle.IsEnabled = canEdit && (RoutingSubscriptionGroups.HasItems || RoutingDraft?.UseSubscriptionRules != false);
+        RoutingSubscriptionToggle.IsEnabled = canEdit && RoutingSource is not null;
         RoutingSubscriptionToggle.Visibility = RoutingSource is null ? Visibility.Collapsed : Visibility.Visible;
         bool selected = RoutingSubscriptionGroups.SelectedItem is SubscriptionGroupRow;
         RoutingSubscriptionGroups.IsEnabled = canEdit;

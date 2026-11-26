@@ -73,14 +73,66 @@ internal static class Subscription
             && address.Host.Length > 0;
     }
 
-    public static Uri? CabinetMihomoAddress(Uri address)
+    internal static IEnumerable<Uri> RoutingAddresses(Uri address)
     {
         string path = address.AbsolutePath.TrimEnd('/');
-        if (address.Scheme != "https" || path.Length == 0 ||
-            path.EndsWith("/mihomo", StringComparison.OrdinalIgnoreCase) ||
-            path.EndsWith("/clash", StringComparison.OrdinalIgnoreCase))
-            return null;
-        return new UriBuilder(address) { Path = path + "/mihomo", Fragment = "" }.Uri;
+        if (address.Scheme != Uri.UriSchemeHttps || address.UserInfo.Length != 0 || path.Length == 0)
+            yield break;
+
+        int separator = path.LastIndexOf('/');
+        if (separator > 0 && path[(separator + 1)..].ToLowerInvariant() is
+            "mihomo" or "clash" or "stash" or "singbox" or "json" or "v2ray-json")
+            path = path[..separator];
+
+        foreach (string format in new[] { "/mihomo", "/clash" })
+        {
+            var candidate = new UriBuilder(address) { Path = path + format, Fragment = "" }.Uri;
+            if (!candidate.Equals(address))
+                yield return candidate;
+        }
+    }
+
+    public static Task<Downloaded> DownloadWithRoutingAsync(Uri address, CancellationToken cancellationToken,
+        bool registerDevice = false, string? previousContent = null) =>
+        DownloadWithRoutingAsync(address, cancellationToken, registerDevice, previousContent, DownloadAsync);
+
+    internal static async Task<Downloaded> DownloadWithRoutingAsync(Uri address, CancellationToken cancellationToken,
+        bool registerDevice, string? previousContent, Func<Uri, CancellationToken, bool, Task<Downloaded>> request)
+    {
+        Downloaded? original = null;
+        IOException? originalError = null;
+        try
+        {
+            original = await request(address, cancellationToken, registerDevice);
+            if (SubscriptionRouting.HasRules(original.Content))
+                return original;
+        }
+        catch (IOException error) when (error is not SubscriptionDeviceException)
+        {
+            originalError = error;
+        }
+
+        foreach (var candidate in RoutingAddresses(address))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                var downloaded = await request(candidate, cancellationToken, registerDevice);
+                if (SubscriptionRouting.HasRules(downloaded.Content))
+                    return downloaded with { Title = downloaded.Title ?? original?.Title };
+            }
+            catch (IOException error) when (error is not SubscriptionDeviceException)
+            {
+                // Older endpoints may only serve the original subscription format.
+            }
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        if (previousContent is not null && SubscriptionRouting.HasRules(previousContent))
+            throw new IOException("Сервер не вернул правила. Сохранена последняя полная версия подписки.");
+        if (originalError is not null)
+            throw originalError;
+        return original!;
     }
 
     internal static string? ReadTitle(string? header)
