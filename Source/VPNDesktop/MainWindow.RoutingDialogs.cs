@@ -1,5 +1,4 @@
 using System.IO;
-using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
@@ -39,7 +38,7 @@ public partial class MainWindow
         RouteKind.Direct => "Напрямую",
         RouteKind.Reject => "Блокировка",
         RouteKind.Server => ServerLabel(target.Server!),
-        RouteKind.SubscriptionGroup => IsUnavailableSitesGroup(target.Category!.Name) ? "Недоступные сайты" : target.Category.Name,
+        RouteKind.SubscriptionGroup => SubscriptionRouting.IsUnavailableSitesGroup(target.Category!.Name) ? "Недоступные сайты" : target.Category.Name,
         _ => "—"
     };
 
@@ -50,18 +49,20 @@ public partial class MainWindow
             ? server.Name : $"{server.Name}  ·  сервер не найден";
     }
 
-    private ComboBox TargetField(Editor editor, RouteTarget selected)
+    private ComboBox TargetField(Editor editor, RouteTarget selected, bool allowMain = false)
     {
-        if (selected.Kind == RouteKind.Main)
+        if (!allowMain && selected.Kind == RouteKind.Main)
             selected = NewRuleTarget();
         var choices = new List<Choice<RouteTarget>>
         {
             new(new(RouteKind.Direct), "Напрямую"),
             new(new(RouteKind.Reject), "Блокировка")
         };
+        if (allowMain)
+            choices.Insert(0, new(new(RouteKind.Main), "Основной сервер"));
         choices.AddRange(ServerRouteOptions());
         if (RoutingSource is { } source)
-            foreach (var item in RoutingSubscriptionGroups.Items.OfType<SubscriptionGroupRow>().Where(item => IsUnavailableSitesGroup(item.Name)))
+            foreach (var item in RoutingSubscriptionGroups.Items.OfType<SubscriptionGroupRow>().Where(item => SubscriptionRouting.IsUnavailableSitesGroup(item.Name)))
                 choices.Add(new(new(RouteKind.SubscriptionGroup,
                     Category: new(RouteServer.SourceKey(source), item.Name)), "Недоступные сайты"));
         if (!choices.Any(choice => choice.Value == selected))
@@ -82,28 +83,11 @@ public partial class MainWindow
             .SelectMany(servers => servers.Select((server, index) => new Choice<RouteTarget>(new(RouteKind.Server, server),
                 servers.Count() == 1 ? server.Name : $"{server.Name} · {index + 1}")));
 
-    private static bool IsUnavailableSitesGroup(string name) =>
-        Regex.IsMatch(name.Trim(), @"\A[^\p{L}\p{N}]*Недоступные\s+сайты\z", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-
-    private sealed record FallbackChoice(RouteTarget Target, bool UseSubscription);
-
-    private FallbackChoice? ChooseRoutingFallback(RoutingProfile profile)
+    private RouteTarget? ChooseRoutingFallback(RoutingProfile profile)
     {
         var editor = NewEditor(this, "Маршрут для остального трафика");
-        var fromSource = new CheckBox
-        {
-            Content = "Как в подписке, если маршрут задан",
-            Style = (Style)FindResource("SettingToggle"),
-            IsChecked = profile.UseSubscriptionRules && profile.UseSubscriptionFallback
-        };
-        editor.Body.Children.Add(fromSource);
-        var direction = TargetField(editor, profile.Default);
-        direction.IsEnabled = fromSource.IsChecked != true;
-        fromSource.Checked += (_, _) => direction.IsEnabled = false;
-        fromSource.Unchecked += (_, _) => direction.IsEnabled = true;
-        return Finish(editor, "Сохранить", () => fromSource.IsChecked == true
-            ? new FallbackChoice(new(RouteKind.Main), true)
-            : new FallbackChoice(Read<RouteTarget>(direction), false));
+        var direction = TargetField(editor, profile.Default, allowMain: true);
+        return Finish(editor, "Сохранить", () => Read<RouteTarget>(direction));
     }
 
     private RouteRule? EditRuleDialog(RouteRule rule,

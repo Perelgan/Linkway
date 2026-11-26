@@ -20,6 +20,7 @@ public partial class MainWindow : Window
     private Mihomo? session;
     private ServerChoice? activeServer;
     private CancellationTokenSource? serverCheckCancellation;
+    private Task? serverCheckTask;
     private bool busy, closing, readyToClose, changingList, profilesReadable;
     private bool returnAfterDashboardImport;
     private Profile? Current => ProfilesList.SelectedItem as Profile;
@@ -91,6 +92,7 @@ public partial class MainWindow : Window
             ?? servers.FirstOrDefault(server => server.Source.Id == selected)
             ?? servers.FirstOrDefault();
         changingList = false;
+        RefreshUnavailableSitesServerChoices();
         UpdateActiveServerRow();
         ServerListSummary.Text = $"Серверов: {servers.Length}";
         RefreshRoutingSourceView();
@@ -203,8 +205,8 @@ public partial class MainWindow : Window
         ConnectButton.IsEnabled = idle && (connected || SelectedServer is not null);
         OpenImportButton.Visibility = hasServers ? Visibility.Collapsed : Visibility.Visible;
         OpenImportButton.IsEnabled = editableProfiles;
-        BulkCheckButton.IsEnabled = !closing && (serverCheckCancellation is { IsCancellationRequested: false }
-            || (idle && hasServers));
+        BulkCheckButton.IsEnabled = serverCheckCancellation is { } ping
+            ? !closing && !ping.IsCancellationRequested : idle && hasServers;
         BulkCheckText.Text = serverCheckCancellation switch
         {
             null => "Проверить все",
@@ -234,6 +236,7 @@ public partial class MainWindow : Window
         ConnectionHeadline.Text = hasServers ? connectionAction : "Добавить сервер";
         StatusDot.Fill = (Brush)FindResource(connected ? "Success" : killSwitch is null ? "Muted" : "StatusWarning");
         SyncDashboardMode(useTun, ProxyMode.IsEnabled);
+        UpdateUnavailableSitesPicker(editable);
         UpdateDashboardDetails();
         ConnectionDetail.Content = connected ? activeServer?.Node.Name ?? "VPN подключён."
             : hasServers ? SelectedServer?.Node.Name ?? "Выберите сервер."
@@ -495,13 +498,40 @@ public partial class MainWindow : Window
             return;
         }
 
-        await RunAsync(() => CheckServersAsync(NodesList.Items.OfType<ServerChoice>().ToArray()));
+        await StartServerCheckAsync(NodesList.Items.OfType<ServerChoice>().ToArray());
     }
 
     private async void CheckServerRow(object sender, RoutedEventArgs e)
     {
         if (sender is Button { DataContext: ServerChoice server })
-            await RunAsync(() => CheckServersAsync([server]));
+            await StartServerCheckAsync([server]);
+    }
+
+    private async Task StartServerCheckAsync(ServerChoice[] servers)
+    {
+        if (busy || closing || serverCheckCancellation is not null || servers.Length == 0)
+            return;
+
+        serverCheckTask = RunCheckAsync();
+        try { await serverCheckTask; }
+        finally
+        {
+            serverCheckTask = null;
+            if (!closing)
+                UpdateControls();
+        }
+
+        async Task RunCheckAsync()
+        {
+            try { await CheckServersAsync(servers); }
+            catch (OperationCanceledException) when (closing) { }
+            catch (Exception error) when (error is IOException or Win32Exception or HttpRequestException or
+                UnauthorizedAccessException or System.Text.Json.JsonException or InvalidOperationException)
+            {
+                if (!closing)
+                    ServerListSummary.Text = "Не удалось завершить проверку серверов.";
+            }
+        }
     }
 
     private async Task CheckServersAsync(ServerChoice[] servers)
@@ -512,7 +542,6 @@ public partial class MainWindow : Window
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
         serverCheckCancellation = cancellation;
         UpdateControls();
-        Message.Text = "";
         ServerListSummary.Text = $"Проверяем серверы · 0 из {servers.Length}";
         foreach (var server in servers)
             server.SetCheckState(ServerCheckState.Queued);
@@ -551,12 +580,10 @@ public partial class MainWindow : Window
     private async Task CheckSourceAsync(ServerChoice[] servers, Action<ServerChoice> report, CancellationToken cancellationToken)
     {
         var source = servers[0].Source;
-        var active = activeServer?.Source is { } activeSource
-            && activeSource.Id == source.Id && activeSource.Content == source.Content ? session : null;
         try
         {
-            await using var temporary = active is null ? await Mihomo.StartAsync(source.Content, cancellationToken) : null;
-            var core = active ?? temporary!;
+            // The check must survive connecting or disposing the main VPN session.
+            await using var core = await Mihomo.StartAsync(source.Content, cancellationToken);
             foreach (var batch in servers.Chunk(ParallelServerChecks))
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -671,6 +698,8 @@ public partial class MainWindow : Window
             await Task.Delay(40);
         try
         {
+            if (serverCheckTask is { } pendingCheck)
+                await pendingCheck;
             await StopAsync();
             InstallPendingUpdate();
         }

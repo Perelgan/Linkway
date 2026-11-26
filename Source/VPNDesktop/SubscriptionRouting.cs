@@ -55,6 +55,12 @@ internal sealed partial class SubscriptionRouting
             destinations.Contains(group.Name)).Select(group => group.Name).ToHashSet(StringComparer.Ordinal);
     }
 
+    internal static bool IsUnavailableSitesGroup(string name) =>
+        UnavailableSitesPattern().IsMatch(name.Trim());
+
+    [GeneratedRegex(@"\A[^\p{L}\p{N}]*Недоступные\s+сайты\z", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex UnavailableSitesPattern();
+
     public bool IsVisibleGroup(string name) => visibleGroups.Contains(name);
 
     public bool IsServiceGroup(string name) => Groups.ContainsKey(name) && !IsVisibleGroup(name);

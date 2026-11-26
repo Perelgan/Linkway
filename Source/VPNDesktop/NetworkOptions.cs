@@ -6,7 +6,7 @@ namespace VPNDesktop;
 internal enum ServerStrategy { Manual, Fastest, Fallback, Balance }
 
 internal sealed record NetworkOptions(ServerStrategy Strategy = ServerStrategy.Manual, bool FakeIp = true,
-    bool RefreshGeoData = false, string Resolvers = "", string DomainResolvers = "", string RuleSets = "")
+    bool RefreshGeoData = false, string Resolvers = "", string DomainResolvers = "", string RuleSets = "", RouteServer? UnavailableSitesServer = null)
 {
     public (string[] Resolvers, Dictionary<string, string> Policies) ParseDns(string fallback, string outbound)
     {

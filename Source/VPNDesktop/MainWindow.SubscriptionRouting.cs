@@ -20,22 +20,7 @@ public partial class MainWindow
         RoutingDefaultLabel.Content = RoutingFallbackLabel(RoutingDraft);
     }
 
-    private string RoutingFallbackLabel(RoutingProfile? draft)
-    {
-        if (draft is null)
-            return "—";
-        if (draft is { UseSubscriptionRules: true, UseSubscriptionFallback: true } && RoutingSource is { } source)
-        {
-            try
-            {
-                if (SubscriptionRouting.Read(source) is { } subscription &&
-                    subscription.Rules.FirstOrDefault(rule => rule.Match == "MATCH") is { } fallback)
-                    return SubscriptionDefaultLabel(subscription, fallback.Destination);
-            }
-            catch (IOException) { }
-        }
-        return TargetLabel(draft.Default);
-    }
+    private string RoutingFallbackLabel(RoutingProfile? draft) => draft is null ? "—" : TargetLabel(draft.Default);
 
     private void RefreshSubscriptionGroups()
     {
@@ -65,12 +50,15 @@ public partial class MainWindow
                             : route is null || (!SubscriptionRouting.IsLocalOption(route) &&
                             !group.Options(source).Contains(route, StringComparer.Ordinal))
                             ? "Маршрут недоступен" : subscription.IsServiceGroup(route)
-                                ? "Маршрут подписки" : SubscriptionOptionLabel(route);
+                                ? "Автоматическая группа" : SubscriptionOptionLabel(route);
                         int count = counts[group.Name].Count();
                         var current = saved?.Destination == RoutingConfig.Main
                             ? new SubscriptionRouteSelection(Target: NewRuleTarget())
                             : new(saved?.Destination, saved?.Target);
-                        var automatic = new SubscriptionRouteSelection();
+                        bool unavailableSites = SubscriptionRouting.IsUnavailableSitesGroup(group.Name);
+                        if (unavailableSites)
+                            return new SubscriptionGroupRow(group.Name,
+                                $"{DashboardUnavailableServerLabel()}  ·  Сервер выбирается на экране подключения", []);
                         string[] members = group.Options(source).Append("DIRECT").Append("REJECT")
                             .Where(value => value != group.Name && value != RoutingConfig.Main && !subscription.IsServiceGroup(value))
                             .Distinct(StringComparer.Ordinal).ToArray();
@@ -78,7 +66,6 @@ public partial class MainWindow
                             .Concat(personal.Where(option => option.Value.Server is not { } server ||
                                 server.Source != key || !members.Contains(server.Name, StringComparer.Ordinal) || option.Value == current.Target)
                                 .Select(option => (Selection: new SubscriptionRouteSelection(Target: option.Value), Label: option.Label)))
-                            .Prepend((Selection: automatic, Label: SubscriptionDefaultLabel(subscription, defaultRoute)))
                             .Select(option => new SubscriptionRouteOption(option.Selection, option.Label, option.Selection == current))
                             .ToArray();
                         return new SubscriptionGroupRow(group.Name, count > 0 ? $"{label}  ·  Правил: {count}" : label, options);
@@ -136,12 +123,10 @@ public partial class MainWindow
             return;
         string key = RouteServer.SourceKey(source);
         var selection = option.Selection;
-        var automatic = new SubscriptionRouteSelection();
         var remaining = (profile.SubscriptionChoices ?? []).Where(choice => choice.Source != key || choice.Group != row.Name);
         SaveDraft(profile with
         {
-            SubscriptionChoices = selection == automatic ? remaining.ToArray()
-                : [.. remaining, new(key, row.Name, selection.Destination, selection.Target)]
+            SubscriptionChoices = [.. remaining, new(key, row.Name, selection.Destination, selection.Target)]
         }, SelectedRoutingRuleIndex);
         Message.Text = $"Маршрут для «{row.Name}» сохранён. Нажмите «Применить».";
     });
@@ -177,9 +162,6 @@ public partial class MainWindow
     private RouteTarget? SelectedSubscriptionTarget() =>
         RoutingSource is { } source && RoutingSubscriptionGroups.SelectedItem is SubscriptionGroupRow row
             ? new(RouteKind.SubscriptionGroup, Category: new(RouteServer.SourceKey(source), row.Name)) : null;
-
-    private string SubscriptionDefaultLabel(SubscriptionRouting subscription, string? destination) =>
-        destination is null || subscription.IsServiceGroup(destination) ? "По подписке" : $"По подписке · {SubscriptionOptionLabel(destination)}";
 
     private string SubscriptionOptionLabel(string option) => option switch
     {

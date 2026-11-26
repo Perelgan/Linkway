@@ -466,7 +466,7 @@ try
             include-all: true
             url: http://health.test/health
           - {name: General, type: select, proxies: [Automatic]}
-        rules: ['MATCH,General']
+        rules: ['DOMAIN,web.test,General', 'MATCH,DIRECT']
         """;
     var automaticSource = new Profile(Guid.NewGuid(), "Automatic subscription", null, automaticYaml,
         [new Node("Unavailable", "Http"), new Node("Working", "Http")], "Working");
@@ -488,9 +488,9 @@ try
 
     var subscriptionProfile = RoutingProfile.Create("From subscription");
     await core.ApplyRoutingAsync(fullSource, "Primary", [fullSource], subscriptionProfile, false, () => { }, token);
-    Require(await Request("video.youtube.test") == "secondary" && await Request("store.steam.test") == "primary" &&
-        await Request("proxy.test") == "secondary" && await Request("internal.test") == "secondary" &&
-        await Request("127.0.0.1") == "direct", "Nested selector default, classical RULE-SET and subscription MATCH");
+    Require(await Request("video.youtube.test") == "primary" && await Request("store.steam.test") == "primary" &&
+        await Request("proxy.test") == "primary" && await Request("internal.test") == "secondary" &&
+        await Request("127.0.0.1") == "primary", "Nested selector and classical RULE-SET preserve the Linkway default route");
 
     string sourceKey = RouteServer.SourceKey(fullSource);
     var changedGroup = subscriptionProfile with { SubscriptionChoices = [new(sourceKey, "YouTube", "Primary")] };
@@ -499,9 +499,19 @@ try
         "Subscription selector choice survives export and import");
     await core.ApplyRoutingAsync(fullSource, "Primary", [fullSource], changedGroup, false, () => { }, token);
     Require(await Request("video.youtube.test") == "primary", "Subscription group selection applies live");
-    var vpnFallback = changedGroup with { PreferLocalFallback = true };
-    await core.ApplyRoutingAsync(fullSource, "Primary", [fullSource], vpnFallback, false, () => { }, token);
-    Require(await Request("127.0.0.1") == "primary", "Explicit main VPN overrides subscription MATCH");
+    var directFallback = changedGroup with { Default = new(RouteKind.Direct) };
+    await core.ApplyRoutingAsync(fullSource, "Primary", [fullSource], directFallback, false, () => { }, token);
+    Require(await Request("127.0.0.1") == "direct", "Explicit routing profile default overrides subscription MATCH");
+
+    var unavailableOptions = new NetworkOptions(UnavailableSitesServer: secondServer);
+    await core.ApplyRoutingAsync(fullSource, "Primary", [fullSource, second], subscriptionProfile,
+        false, () => { }, token, unavailableOptions);
+    Require(await Request("video.youtube.test") == "secondary" && await Request("store.steam.test") == "primary",
+        "Dashboard server selection applies only to the unavailable-sites group");
+    await core.ApplyRoutingAsync(fullSource, "Primary", [fullSource], subscriptionProfile,
+        false, () => { }, token, unavailableOptions);
+    Require(await Request("video.youtube.test") == "primary",
+        "A removed dashboard server falls back to the main VPN");
 
     var manual = changedGroup with
     {

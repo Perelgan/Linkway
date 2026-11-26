@@ -23,9 +23,7 @@ public sealed class CountryFlagLabelConverter : IValueConverter
 
     private static (BitmapSource? Flag, string Label) Split(string label)
     {
-        const string automatic = "По подписке · ";
-        int start = label.StartsWith(automatic, StringComparison.Ordinal) ? automatic.Length : 0;
-        ReadOnlySpan<char> name = label.AsSpan(start).TrimStart();
+        ReadOnlySpan<char> name = label.AsSpan().TrimStart();
         if (name.Length < 2)
             return (null, label);
 
@@ -49,7 +47,7 @@ public sealed class CountryFlagLabelConverter : IValueConverter
         name = name[length..].TrimStart();
         while (!name.IsEmpty && name[0] is '-' or '–' or '—' or '·' or '|' or ':' or '\uFE0F')
             name = name[1..].TrimStart();
-        return (flag, label[..start] + (name.IsEmpty ? $"{char.ToUpperInvariant(first)}{char.ToUpperInvariant(second)}" : name.ToString()));
+        return (flag, name.IsEmpty ? $"{char.ToUpperInvariant(first)}{char.ToUpperInvariant(second)}" : name.ToString());
     }
 
     private static bool TryRegionalIndicator(ReadOnlySpan<char> text, out char letter)

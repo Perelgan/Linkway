@@ -30,9 +30,6 @@ internal sealed record SubscriptionChoice(string Source, string Group, string? D
 internal sealed record RoutingProfile(Guid Id, string Name, RouteTarget Default, RouteRule[] Rules, RouteGroup[] Groups,
     SubscriptionChoice[]? SubscriptionChoices = null, bool UseSubscriptionRules = true, bool PreferLocalFallback = false)
 {
-    [JsonIgnore]
-    public bool UseSubscriptionFallback => !PreferLocalFallback && Default.Kind == RouteKind.Main;
-
     public static RoutingProfile Create(string name) => new(Guid.NewGuid(), name, new(RouteKind.Main), [], []);
 }
 

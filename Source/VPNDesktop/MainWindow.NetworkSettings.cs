@@ -21,7 +21,8 @@ public partial class MainWindow
             return Task.CompletedTask;
         var network = new NetworkOptions((ServerStrategy)ServerStrategyBox.SelectedIndex,
             FakeIpToggle.IsChecked == true, GeoRefreshToggle.IsChecked == true,
-            ResolversBox.Text.Trim(), DomainResolversBox.Text.Trim(), RuleSetsBox.Text.Trim());
+            ResolversBox.Text.Trim(), DomainResolversBox.Text.Trim(), RuleSetsBox.Text.Trim(),
+            clientSettings.Network?.UnavailableSitesServer);
         _ = network.ParseDns("https://1.1.1.1/dns-query", RoutingConfig.Main);
         _ = network.ParseRuleSets(RoutingConfig.Main).ToArray();
         var updated = clientSettings with { Network = network };

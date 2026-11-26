@@ -208,7 +208,7 @@ internal sealed partial class RoutingConfig
 
             foreach (var rule in subscription.Rules)
             {
-                if (rule.Match == "MATCH" && !profile.UseSubscriptionFallback)
+                if (rule.Match == "MATCH")
                 {
                     AddRule("MATCH", profile.Default);
                     break;
@@ -221,8 +221,6 @@ internal sealed partial class RoutingConfig
                     config.GeoFiles.Add("GeoSite.dat");
                 string outbound = ResolvePolicy(rule.Destination);
                 WriteRule(match, outbound, rule.Modifier);
-                if (rule.Match == "MATCH")
-                    break;
             }
 
             string AddFeed(string name)
@@ -272,8 +270,9 @@ internal sealed partial class RoutingConfig
                 if (choice is not null && !SubscriptionRouting.IsLocalOption(choice) &&
                     !group.Options(primary).Contains(choice, StringComparer.Ordinal))
                     choice = null;
-                bool automatic = saved is null && group.IsAutomatic;
-                var destinations = automatic
+                bool unavailableSites = SubscriptionRouting.IsUnavailableSitesGroup(name);
+                bool automatic = !unavailableSites && saved is null && group.IsAutomatic;
+                var destinations = unavailableSites ? [UnavailableSitesRoute()] : automatic
                     ? group.Options(primary).Select(ResolvePolicy).Distinct(StringComparer.Ordinal).ToArray()
                     : [saved?.Target is { } target ? ResolveTarget(target) : ResolvePolicy(choice)];
                 pending.Remove(name);
@@ -302,6 +301,14 @@ internal sealed partial class RoutingConfig
                 return policy;
             return primary.Nodes.Any(candidate => candidate.Name == name && IsRoutable(candidate))
                 ? AddServer(new(source, name)) : "REJECT";
+        }
+
+        string UnavailableSitesRoute()
+        {
+            var chosen = network?.UnavailableSitesServer;
+            return chosen is not null && catalog.TryGetValue(chosen.Source, out var configured) &&
+                configured.Nodes.Any(candidate => candidate.Name == chosen.Name && IsRoutable(candidate))
+                ? AddServer(chosen) : Main;
         }
 
         string AddServer(RouteServer server, string? alias = null)

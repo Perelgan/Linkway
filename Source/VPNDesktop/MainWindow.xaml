@@ -700,6 +700,13 @@
                                     <TextBlock x:Name="DashboardSubscription" TextTrimming="CharacterEllipsis" FontWeight="SemiBold"/>
                                     <TextBlock x:Name="DashboardSession" Margin="0,4,0,3" Foreground="{DynamicResource Muted}"/>
                                     <TextBlock x:Name="DashboardPing" Visibility="Collapsed" Foreground="{DynamicResource Muted}"/>
+                                    <StackPanel x:Name="UnavailableSitesPicker" Visibility="Collapsed" Margin="0,8,0,0">
+                                        <TextBlock Text="Недоступные сайты" Foreground="{DynamicResource Muted}" Margin="0,0,0,4"/>
+                                        <ComboBox x:Name="UnavailableSitesServerBox" Style="{StaticResource RoutingSelect}"
+                                                  ItemTemplate="{StaticResource FlaggedChoice}" SelectionChanged="UnavailableSitesServerChanged"
+                                                  AutomationProperties.Name="Сервер для недоступных сайтов"
+                                                  ToolTip="Сервер для группы «Недоступные сайты» в правилах источника."/>
+                                    </StackPanel>
                                     <local:TrafficChart x:Name="DashboardChart" Height="54" Margin="0,6,0,0"
                                                         Foreground="{DynamicResource Accent}" Background="{DynamicResource Line}"
                                                         AutomationProperties.Name="График скорости за последнюю минуту"/>

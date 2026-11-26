@@ -32,7 +32,7 @@ public partial class MainWindow
     {
         CoreBuilds.IsEnabled = FindCoreBuildsButton.IsEnabled = idle;
         var active = MihomoVersions.Active;
-        InstallCoreBuildButton.IsEnabled = idle && !connected && killSwitch is null &&
+        InstallCoreBuildButton.IsEnabled = idle && !connected && killSwitch is null && serverCheckCancellation is null &&
             CoreBuilds.SelectedItem is CoreChoice choice &&
             (choice.Version != active.Version || choice.Release is null && !active.Bundled);
         InstallCoreBuildButton.ToolTip = connected || killSwitch is not null
@@ -65,7 +65,8 @@ public partial class MainWindow
 
     private async void InstallCoreBuild(object sender, RoutedEventArgs e) => await RunAsync(async () =>
     {
-        if (session is not null || killSwitch is not null || CoreBuilds.SelectedItem is not CoreChoice choice)
+        if (session is not null || killSwitch is not null || serverCheckCancellation is not null ||
+            CoreBuilds.SelectedItem is not CoreChoice choice)
             return;
         CoreUpdateStatus.Text = choice.Release is null ? "Выбираем комплектное ядро…" : "Загружаем и проверяем ядро Mihomo…";
         try

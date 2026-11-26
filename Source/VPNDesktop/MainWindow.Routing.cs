@@ -305,7 +305,7 @@ public partial class MainWindow
     private async void EditRoutingDefault(object sender, RoutedEventArgs e) => await EditDraftAsync(profile =>
     {
         if (ChooseRoutingFallback(profile) is { } choice)
-            SaveDraft(profile with { Default = choice.Target, PreferLocalFallback = !choice.UseSubscription },
+            SaveDraft(profile with { Default = choice, PreferLocalFallback = true },
                 SelectedRoutingRuleIndex);
     });
 
