@@ -15,6 +15,7 @@ public partial class MainWindow
     private const string StartupName = "Linkway";
     private const int Hotkey = 0x4C57;
     private Forms.NotifyIcon? tray;
+    private System.Drawing.Icon? trayIcon;
     private Forms.ContextMenuStrip? trayMenu;
     private Forms.ToolStripMenuItem? trayConnection;
     private HwndSource? hotkeySource;
@@ -91,9 +92,13 @@ public partial class MainWindow
         trayConnection = (Forms.ToolStripMenuItem)trayMenu.Items.Add("Подключить", null, (_, _) => ToggleConnection(this, new()));
         trayMenu.Items.Add("Диагностика", null, (_, _) => { ShowFromTray(); DiagnosticsNav.IsChecked = true; });
         trayMenu.Items.Add("Выход", null, (_, _) => { exitRequested = true; Close(); });
+        using var iconStream = Application.GetResourceStream(new Uri("/VPNDesktop;component/Assets/Linkway.ico",
+            UriKind.Relative)).Stream;
+        using var resourceIcon = new System.Drawing.Icon(iconStream);
+        trayIcon = (System.Drawing.Icon)resourceIcon.Clone();
         tray = new Forms.NotifyIcon
         {
-            Icon = System.Drawing.SystemIcons.Shield, Text = "Linkway", ContextMenuStrip = trayMenu, Visible = true
+            Icon = trayIcon, Text = "Linkway", ContextMenuStrip = trayMenu, Visible = true
         };
         tray.DoubleClick += (_, _) => ShowFromTray();
         UpdateTray();
@@ -130,6 +135,7 @@ public partial class MainWindow
             source.RemoveHook(OnHotkey);
         }
         tray?.Dispose();
+        trayIcon?.Dispose();
         trayMenu?.Dispose();
         tray = null;
     }
@@ -183,7 +189,7 @@ public partial class MainWindow
 
     private void BeginRecovery()
     {
-        nextHealthCheck = DateTimeOffset.UtcNow.AddSeconds(20);
+        nextHealthCheck = DateTimeOffset.UtcNow.AddSeconds(clientSettings.DeveloperMode ? 0 : 20);
         retryAt = null;
         attempts = failedHealthChecks = 0;
         NotifyTray("Подключение установлено.");
@@ -199,9 +205,9 @@ public partial class MainWindow
 
     private async Task CheckRecoveryAsync()
     {
-        if (closing || busy || checkingRecovery || !clientSettings.AutoRecover)
+        if (closing || busy || checkingRecovery || (!clientSettings.AutoRecover && !clientSettings.DeveloperMode))
             return;
-        if (session is null && retryAt is { } retry && retry <= DateTimeOffset.UtcNow)
+        if (clientSettings.AutoRecover && session is null && retryAt is { } retry && retry <= DateTimeOffset.UtcNow)
         {
             if (recoveryServer is not { } previous || NodesList.Items.OfType<ServerChoice>().FirstOrDefault(server =>
                 RouteServer.From(server) == RouteServer.From(previous)) is not { } target)
@@ -227,16 +233,16 @@ public partial class MainWindow
         }
         finally { checkingRecovery = false; }
 
-        if (session != core || closing || busy || !clientSettings.AutoRecover)
+        if (session != core || closing || busy)
             return;
-        if (delay is int milliseconds)
+        runtimeLatency = delay;
+        UpdateDashboardClock(activeServer);
+        if (delay.HasValue)
         {
             failedHealthChecks = 0;
-            runtimeLatency = milliseconds;
             return;
         }
-        runtimeLatency = null;
-        if (++failedHealthChecks < 2)
+        if (!clientSettings.AutoRecover || ++failedHealthChecks < 2)
             return;
         await RunAsync(async () =>
         {

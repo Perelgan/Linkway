@@ -189,7 +189,7 @@ internal static class Subscription
         for (int redirects = 0; ; redirects++)
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, address);
-            request.Headers.UserAgent.ParseAdd($"mihomo/1.19.34 VPNDesktop/{GitHubUpdates.InstalledVersion}");
+            request.Headers.UserAgent.ParseAdd($"mihomo/{MihomoVersions.Active.Version.ToString(3)} VPNDesktop/{GitHubUpdates.InstalledVersion}");
             if (registerDevice)
                 SubscriptionDevice.AddHeaders(address, request.Headers);
             var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);

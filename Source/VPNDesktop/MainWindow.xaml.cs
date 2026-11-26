@@ -101,6 +101,7 @@ public partial class MainWindow : Window
     {
         foreach (var server in NodesList.Items.OfType<ServerChoice>())
         {
+            server.ShowLatency = clientSettings.DeveloperMode;
             server.IsConnected = activeServer is { } active && server.Node == active.Node
                 && server.Source.Id == active.Source.Id && server.Source.Content == active.Source.Content;
         }
@@ -408,6 +409,7 @@ public partial class MainWindow : Window
 
     private async void ToggleConnection(object sender, RoutedEventArgs e) => await RunAsync(async () =>
     {
+        AnimateConnectionButton();
         if (session is not null)
         {
             retryAt = null;
@@ -447,7 +449,7 @@ public partial class MainWindow : Window
             if (useTun)
             {
                 if (KillSwitchToggle.IsChecked == true)
-                    killSwitch ??= WindowsKillSwitch.Arm(Path.Combine(AppContext.BaseDirectory, "mihomo.exe"));
+                    killSwitch ??= WindowsKillSwitch.Arm(candidate.ExecutablePath);
                 await candidate.EnableTunAsync(lifetime.Token);
                 killSwitch?.AllowTunAdapter();
             }

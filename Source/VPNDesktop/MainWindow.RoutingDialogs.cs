@@ -232,7 +232,7 @@ public partial class MainWindow
     {
         var window = new Window
         {
-            Title = title, Owner = owner, Width = 565, MaxHeight = Math.Min(760, SystemParameters.WorkArea.Height),
+            Title = title, Icon = Icon, Owner = owner, Width = 565, MaxHeight = Math.Min(760, SystemParameters.WorkArea.Height),
             SizeToContent = SizeToContent.Height, WindowStartupLocation = WindowStartupLocation.CenterOwner,
             ResizeMode = ResizeMode.NoResize, ShowInTaskbar = false, Background = BrushFor("Panel"),
             Foreground = BrushFor("Ink"), FontFamily = FontFamily, FontSize = FontSize, UseLayoutRounding = true,

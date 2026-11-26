@@ -51,7 +51,9 @@ public partial class MainWindow
             UpdateStatus.Text = "Нажмите «Проверить обновления», чтобы загрузить сборки.";
         LoadNetworkSettings();
         LoadDesktopSettings();
+        ShowCoreBuilds([]);
         LightThemeToggle.IsChecked = clientSettings.LightTheme;
+        DeveloperModeToggle.IsChecked = clientSettings.DeveloperMode;
         ApplyTheme(clientSettings.LightTheme);
         settingsInitialized = true;
     }
@@ -94,6 +96,7 @@ public partial class MainWindow
         CheckUpdatesButton.IsEnabled = idle && buildListRequest is null;
         InstallUpdateButton.IsEnabled = idle && !connected && buildListRequest is null && SelectedUpdate is { } release
             && release.Version != GitHubUpdates.InstalledRelease;
+        UpdateCoreControls(idle, connected);
         InstallUpdateButton.ToolTip = connected
             ? "Отключите VPN перед установкой."
             : SelectedUpdate?.Manifest is not null

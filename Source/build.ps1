@@ -63,6 +63,8 @@ Copy-Item -LiteralPath (Join-Path $PSScriptRoot '..\README.md') -Destination $bu
 $launcherSources = @((Join-Path $PSScriptRoot 'Launcher\main.go'), (Join-Path $PSScriptRoot 'Launcher\update.go'), (Join-Path $PSScriptRoot 'Launcher\update_files.go'))
 go build -trimpath -ldflags '-H windowsgui -s -w' -o (Join-Path $bundle 'VPNDesktop.exe') @launcherSources
 if ($LASTEXITCODE -ne 0) { throw 'Go launcher build failed' }
+& (Join-Path $PSScriptRoot 'Launcher/Set-Icon.ps1') -Executable (Join-Path $bundle 'VPNDesktop.exe') `
+    -Icon (Join-Path $PSScriptRoot 'VPNDesktop/Assets/Linkway.ico')
 
 if ($ReleaseArchive) {
     $archive = Join-Path (Split-Path -Parent $bundle) 'VPNDesktop-win-x64.zip'

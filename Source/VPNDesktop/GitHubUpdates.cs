@@ -174,7 +174,7 @@ internal static partial class GitHubUpdates
         }
     }
 
-    private static async Task DownloadAsync(Uri url, byte[] digest, long size, string path,
+    internal static async Task DownloadAsync(Uri url, byte[] digest, long size, string path,
         IProgress<int>? progress, CancellationToken token)
     {
         for (int redirect = 0; redirect < 5; redirect++)

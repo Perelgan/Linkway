@@ -23,14 +23,14 @@ internal sealed partial class Mihomo
         try
         {
             await WriteProvidersAsync(directory, candidate, cancellationToken);
-            await CheckGeoAsync(directory, candidate, cancellationToken);
+            await CheckGeoAsync(directory, candidate, ExecutablePath, cancellationToken);
             if (candidate.ExpectedRuleProviders.Count > 0)
             {
                 // The core can accept a config while logging a rule-provider load failure.
                 // Verify the same files in an isolated core before changing live routes.
                 await using var checkedConfig = await StartAsync((port, controller, secret) =>
                     RoutingConfig.Build(port, controller, secret, source, node, sources, profile, bypassLan, network),
-                    cancellationToken, Path.GetDirectoryName(directory), directory);
+                    cancellationToken, Path.GetDirectoryName(directory), directory, ExecutablePath);
             }
             try
             {
@@ -279,7 +279,8 @@ internal sealed partial class Mihomo
         catch (UnauthorizedAccessException) { }
     }
 
-    private static async Task CheckGeoAsync(string directory, RoutingConfig configuration, CancellationToken cancellationToken)
+    private static async Task CheckGeoAsync(string directory, RoutingConfig configuration, string executablePath,
+        CancellationToken cancellationToken)
     {
         if (configuration.GeoFiles.Count == 0)
             return;
@@ -293,7 +294,7 @@ internal sealed partial class Mihomo
         }
         string path = Path.Combine(directory, "config-check.yaml");
         await File.WriteAllTextAsync(path, configuration.Payload(false), cancellationToken);
-        var start = new ProcessStartInfo(Core)
+        var start = new ProcessStartInfo(executablePath)
         {
             WorkingDirectory = directory,
             UseShellExecute = false,

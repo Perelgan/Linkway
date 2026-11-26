@@ -40,6 +40,32 @@ try
     Require(UpdateVersion.Parse("1.2.0")!.CompareTo(UpdateVersion.Parse("1.2.0-rc.1")) > 0,
         "A stable release supersedes a prerelease of the same version");
 
+    var kernels = MihomoVersions.ReadReleases(JsonSerializer.SerializeToElement(new[]
+    {
+        KernelRelease("v1.19.33"), KernelRelease("v1.19.34", variant: "v1"),
+        KernelRelease("v1.19.32"), KernelRelease("v1.20.0", prerelease: true),
+        KernelRelease("v1.20.1", invalidOrigin: true), KernelRelease("v1.20.2", withDigest: false)
+    }));
+    Require(kernels.Select(item => item.Version.ToString(3)).SequenceEqual(["1.19.34", "1.19.33"]) &&
+        kernels[0].AssetName.Contains("-amd64-v1-", StringComparison.Ordinal),
+        "Kernel selection accepts official supported Windows x64 releases with checksums");
+
+    static object KernelRelease(string tag, string variant = "compatible", bool prerelease = false,
+        bool invalidOrigin = false, bool withDigest = true)
+    {
+        string name = $"mihomo-windows-amd64-{variant}-{tag}.zip";
+        return new
+        {
+            tag_name = tag, prerelease, draft = false,
+            assets = new[]
+            {
+                new { name, state = "uploaded", digest = withDigest ? "sha256:" + new string('a', 64) : null,
+                    size = 1234, browser_download_url = $"https://github.com/{(invalidOrigin ? "other" : "MetaCubeX")}/mihomo/releases/download/{tag}/{name}" }
+            }
+        };
+    }
+
+
     static object Release(string version, bool prerelease = false, bool draft = false, bool withDigest = true)
     {
         var tag = $"v{version}";
@@ -69,6 +95,12 @@ try
 
     Profile first = Source("Same name", primary.Port);
     Profile second = Source("Same name", secondary.Port);
+
+    var serverDisplay = new ServerChoice(first, first.Nodes[0]);
+    serverDisplay.SetCheckState(ServerCheckState.Available, 47);
+    Require(serverDisplay.StatusText == "Доступен", "Response time is hidden by default");
+    serverDisplay.ShowLatency = true;
+    Require(serverDisplay.StatusText == "47 мс", "Developer mode shows the measured response time");
     Profile unavailable = Source("Unavailable", deadPort);
     var sources = new[] { first, second, unavailable };
     var secondServer = new RouteServer(RouteServer.SourceKey(second), "Same name");

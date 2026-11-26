@@ -57,6 +57,42 @@ public partial class MainWindow
         });
     }
 
+    private void DeveloperModeChanged(object sender, RoutedEventArgs e)
+    {
+        if (!settingsInitialized)
+            return;
+        var updated = clientSettings with { DeveloperMode = DeveloperModeToggle.IsChecked == true };
+        try
+        {
+            updated.Save();
+            clientSettings = updated;
+            if (updated.DeveloperMode)
+                nextHealthCheck = DateTimeOffset.UtcNow;
+        }
+        catch (Exception error) when (error is System.IO.IOException or UnauthorizedAccessException or System.Security.Cryptography.CryptographicException)
+        {
+            DeveloperModeToggle.IsChecked = clientSettings.DeveloperMode;
+            Message.Text = "Не удалось сохранить режим разработчика.";
+        }
+        foreach (var server in NodesList.Items.OfType<ServerChoice>())
+            server.ShowLatency = clientSettings.DeveloperMode;
+        UpdateDashboardClock(activeServer ?? SelectedServer);
+    }
+
+    private void AnimateConnectionButton()
+    {
+        if (!ConnectButton.IsVisible || !SystemParameters.ClientAreaAnimation)
+            return;
+        var pulse = new DoubleAnimationUsingKeyFrames { FillBehavior = FillBehavior.Stop };
+        pulse.KeyFrames.Add(new LinearDoubleKeyFrame(0.90, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(85))));
+        pulse.KeyFrames.Add(new EasingDoubleKeyFrame(1.06, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(190)),
+            new CubicEase { EasingMode = EasingMode.EaseOut }));
+        pulse.KeyFrames.Add(new EasingDoubleKeyFrame(1, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(310)),
+            new CubicEase { EasingMode = EasingMode.EaseOut }));
+        ConnectionButtonScale.BeginAnimation(ScaleTransform.ScaleXProperty, pulse);
+        ConnectionButtonScale.BeginAnimation(ScaleTransform.ScaleYProperty, pulse);
+    }
+
     private void DashboardModeChanged(object sender, RoutedEventArgs e)
     {
         if (!settingsInitialized || !ProxyMode.IsEnabled)
@@ -89,10 +125,15 @@ public partial class MainWindow
 
     private void UpdateDashboardClock(ServerChoice? server)
     {
-        string delay = runtimeLatency is int milliseconds ? $"{milliseconds} мс" : server?.StatusText ?? "—";
         DashboardSession.Text = connectedFor.IsRunning
-            ? $"Задержка {delay}   ·   {connectedFor.Elapsed:hh\\:mm\\:ss}"
-            : $"Задержка {delay}";
+            ? $"Время сеанса {connectedFor.Elapsed:hh\\:mm\\:ss}" : "";
+        DashboardSession.Visibility = connectedFor.IsRunning ? Visibility.Visible : Visibility.Collapsed;
+        DashboardPing.Visibility = clientSettings.DeveloperMode ? Visibility.Visible : Visibility.Collapsed;
+        if (clientSettings.DeveloperMode)
+        {
+            int? delay = connectedFor.IsRunning ? runtimeLatency : server?.Latency;
+            DashboardPing.Text = delay is int milliseconds ? $"Пинг {milliseconds} мс" : "Пинг —";
+        }
     }
 
     private void StartDashboardSession()
@@ -102,15 +143,19 @@ public partial class MainWindow
         lastTraffic = null;
         DashboardChart.Clear();
         ResetSessionTraffic();
+        AnimateConnectionButton();
     }
 
     private void EndDashboardSession()
     {
         runtimeLatency = null;
+        bool hadSession = connectedFor.IsRunning;
         connectedFor.Reset();
         lastTraffic = null;
         DashboardChart.Clear();
-        DashboardSpeed.Text = "↓ 0 Б/с   ↑ 0 Б/с";
+        SidebarSpeed.Text = "↓ 0 Б/с   ↑ 0 Б/с";
+        if (hadSession && !closing)
+            AnimateConnectionButton();
         UpdateDashboardDetails();
     }
 
@@ -132,12 +177,13 @@ public partial class MainWindow
                 return;
             AccumulateTraffic(download, upload, connections);
             double seconds = connectedFor.Elapsed.TotalSeconds;
-            if (dashboardVisible && lastTraffic is { } previous && seconds > previous.Seconds)
+            if (lastTraffic is { } previous && seconds > previous.Seconds)
             {
                 double down = Math.Max(0, download - previous.Download) / (seconds - previous.Seconds);
                 double up = Math.Max(0, upload - previous.Upload) / (seconds - previous.Seconds);
-                DashboardSpeed.Text = $"↓ {FormatSpeed(down)}   ↑ {FormatSpeed(up)}";
-                DashboardChart.Add(down, up);
+                SidebarSpeed.Text = $"↓ {FormatSpeed(down)}   ↑ {FormatSpeed(up)}";
+                if (dashboardVisible)
+                    DashboardChart.Add(down, up);
             }
             lastTraffic = (download, upload, seconds);
         }

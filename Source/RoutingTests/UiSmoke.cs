@@ -38,6 +38,13 @@ internal static class UiSmoke
                 if (window.FindName("CheckUpdatesButton") is not Button { Content: "Проверить обновления" })
                     throw new InvalidOperationException("The update check button is missing.");
                 VerifySubscriptionRulesSwitch(window);
+                if (window.Icon is null ||
+                    window.FindName("ConnectionButtonScale") is not ScaleTransform ||
+                    window.FindName("SidebarSpeed") is not TextBlock ||
+                    window.FindName("DashboardPing") is not TextBlock { Visibility: Visibility.Collapsed } ||
+                    window.FindName("DeveloperModeToggle") is not CheckBox ||
+                    window.FindName("CoreBuilds") is not ComboBox)
+                    throw new InvalidOperationException("Connection and kernel settings controls do not match the default layout.");
                 var diagnostics = (RadioButton)window.FindName("DiagnosticsNav");
                 if (((StackPanel)diagnostics.Content).Children.OfType<Path>().Single().Stroke is null)
                     throw new InvalidOperationException("The diagnostic navigation icon has no stroke.");

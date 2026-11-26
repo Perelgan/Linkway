@@ -26,7 +26,20 @@ internal sealed class ServerChoice(Profile source, Node node) : INotifyPropertyC
     };
     public ServerCheckState CheckState { get; private set; }
     private int delay;
-    private bool isConnected;
+    private bool isConnected, showLatency;
+    public int? Latency => CheckState == ServerCheckState.Available ? delay : null;
+
+    public bool ShowLatency
+    {
+        get => showLatency;
+        set
+        {
+            if (showLatency == value)
+                return;
+            showLatency = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(StatusText)));
+        }
+    }
 
     public bool IsConnected
     {
@@ -44,7 +57,7 @@ internal sealed class ServerChoice(Profile source, Node node) : INotifyPropertyC
     {
         ServerCheckState.Queued => "В очереди",
         ServerCheckState.Testing => "Проверка…",
-        ServerCheckState.Available => $"{delay} мс",
+        ServerCheckState.Available => ShowLatency ? $"{delay} мс" : "Доступен",
         ServerCheckState.Unavailable => "Нет ответа",
         ServerCheckState.Error => "Ошибка проверки",
         _ => "—"

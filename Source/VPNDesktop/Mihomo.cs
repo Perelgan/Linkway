@@ -13,7 +13,6 @@ namespace VPNDesktop;
 internal sealed partial class Mihomo : IAsyncDisposable
 {
     private const string Group = RoutingConfig.Main;
-    private static readonly string Core = Path.Combine(AppContext.BaseDirectory, "mihomo.exe");
     private readonly string directory;
     private readonly HttpClient api;
     private readonly Process process;
@@ -23,6 +22,7 @@ internal sealed partial class Mihomo : IAsyncDisposable
     private RoutingConfig currentConfig;
     private bool tunRequested;
     public int Port { get; }
+    public string ExecutablePath { get; }
     public bool Exited => process.HasExited;
 
     private Mihomo(string directory, HttpClient api, Process process, ProcessJob job, int port,
@@ -36,6 +36,7 @@ internal sealed partial class Mihomo : IAsyncDisposable
         this.secret = secret;
         currentConfig = config;
         Port = port;
+        ExecutablePath = process.StartInfo.FileName;
     }
 
     public static Task<Mihomo> StartAsync(string content, CancellationToken cancellationToken) =>
@@ -47,10 +48,12 @@ internal sealed partial class Mihomo : IAsyncDisposable
             source, node, sources, profile, bypassLan, network), cancellationToken, sessionRoot);
 
     private static async Task<Mihomo> StartAsync(Func<int, int, string, RoutingConfig> makeConfig,
-        CancellationToken cancellationToken, string? sessionRoot = null, string? preparedDirectory = null)
+        CancellationToken cancellationToken, string? sessionRoot = null, string? preparedDirectory = null,
+        string? executablePath = null)
     {
-        if (!File.Exists(Core))
-            throw new IOException("Положите mihomo.exe рядом с VPNDesktop.exe.");
+        executablePath ??= MihomoVersions.Active.Executable;
+        if (!File.Exists(executablePath))
+            throw new IOException("Файл ядра Mihomo недоступен.");
 
         string directory = Path.Combine(sessionRoot ?? ProfileStore.DirectoryPath, "session-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
@@ -64,10 +67,10 @@ internal sealed partial class Mihomo : IAsyncDisposable
             string config = Path.Combine(directory, "config.yaml");
             var routing = makeConfig(port, controller, secret);
             await WriteProvidersAsync(directory, routing, cancellationToken, preparedDirectory);
-            await CheckGeoAsync(directory, routing, cancellationToken);
+            await CheckGeoAsync(directory, routing, executablePath, cancellationToken);
             await File.WriteAllTextAsync(config, routing.Payload(false), cancellationToken);
 
-            var start = new ProcessStartInfo(Core)
+            var start = new ProcessStartInfo(executablePath)
             {
                 WorkingDirectory = directory,
                 UseShellExecute = false,
@@ -112,6 +115,28 @@ internal sealed partial class Mihomo : IAsyncDisposable
             }
             throw;
         }
+    }
+
+    internal static async Task CheckExecutableAsync(string executable, Version requested, CancellationToken cancellationToken)
+    {
+        const string label = "Linkway compatibility check";
+        const string yaml = """
+            proxies:
+              - name: Linkway compatibility check
+                type: http
+                server: 127.0.0.1
+                port: 9
+            """;
+        var profile = new Profile(Guid.NewGuid(), label, null, yaml, [new Node(label, "Http")], label);
+        string? directory = Path.GetDirectoryName(executable);
+        await using var core = await StartAsync(
+            (port, controller, secret) => RoutingConfig.Build(port, controller, secret, profile, label, [profile], null, false),
+            cancellationToken, directory, executablePath: executable);
+        using var version = await core.GetAsync("version", cancellationToken);
+        if (!version.RootElement.TryGetProperty("version", out var reported) ||
+            reported.GetString() != $"v{requested.ToString(3)}")
+            throw new IOException("Ядро Mihomo сообщило неожиданную версию.");
+        await core.GetTrafficSnapshotAsync(cancellationToken);
     }
 
     private static (int Port, int Controller) GetPorts()

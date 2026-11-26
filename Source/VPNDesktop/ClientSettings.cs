@@ -6,7 +6,8 @@ using System.Text.Json.Serialization;
 namespace VPNDesktop;
 
 internal sealed record ClientSettings(bool Tun = false, bool DirectLan = false, bool KillSwitch = false, bool ExperimentalUpdates = false,
-    bool LightTheme = false, bool AutoConnect = false, bool AutoRecover = false, bool MinimizeToTray = false, bool SaveHistory = false)
+    bool LightTheme = false, bool AutoConnect = false, bool AutoRecover = false, bool MinimizeToTray = false, bool SaveHistory = false,
+    bool DeveloperMode = false)
 {
     private static readonly string PathName = Path.Combine(ProfileStore.DirectoryPath, "settings.json");
 
