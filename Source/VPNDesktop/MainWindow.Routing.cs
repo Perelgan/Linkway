@@ -219,7 +219,7 @@ public partial class MainWindow
                     {
                         killSwitch?.AllowTunAdapter();
                         RoutingProfiles.Save(updated);
-                    }, lifetime.Token);
+                    }, lifetime.Token, clientSettings.Network);
             }
             catch (RoutingRecoveryException)
             {

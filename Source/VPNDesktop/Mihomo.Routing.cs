@@ -16,10 +16,10 @@ internal sealed partial class Mihomo
     }) { Timeout = TimeSpan.FromSeconds(20) };
 
     public async Task ApplyRoutingAsync(Profile source, string node, Profile[] sources, RoutingProfile profile,
-        bool bypassLan, Action save, CancellationToken cancellationToken)
+        bool bypassLan, Action save, CancellationToken cancellationToken, NetworkOptions? network = null)
     {
         var previous = currentConfig;
-        var candidate = RoutingConfig.Build(Port, controller, secret, source, node, sources, profile, bypassLan);
+        var candidate = RoutingConfig.Build(Port, controller, secret, source, node, sources, profile, bypassLan, network);
         try
         {
             await WriteProvidersAsync(directory, candidate, cancellationToken);
@@ -29,7 +29,7 @@ internal sealed partial class Mihomo
                 // The core can accept a config while logging a rule-provider load failure.
                 // Verify the same files in an isolated core before changing live routes.
                 await using var checkedConfig = await StartAsync((port, controller, secret) =>
-                    RoutingConfig.Build(port, controller, secret, source, node, sources, profile, bypassLan),
+                    RoutingConfig.Build(port, controller, secret, source, node, sources, profile, bypassLan, network),
                     cancellationToken, Path.GetDirectoryName(directory), directory);
             }
             try
@@ -38,6 +38,7 @@ internal sealed partial class Mihomo
                 cancellationToken.ThrowIfCancellationRequested();
                 save();
                 currentConfig = candidate;
+                CacheRemoteRules(directory, candidate);
             }
             catch (CoreConfigRejected)
             {
@@ -189,8 +190,39 @@ internal sealed partial class Mihomo
             if (preparedDirectory is not null)
                 File.Copy(Path.Combine(preparedDirectory, file), path);
             else
-                await DownloadRuleFileAsync(address, path, cancellationToken);
+            {
+                try { await DownloadRuleFileAsync(address, path, cancellationToken); }
+                catch (IOException) when (!cancellationToken.IsCancellationRequested && File.Exists(RuleCachePath(directory, file)))
+                {
+                    File.Copy(RuleCachePath(directory, file), path);
+                }
+            }
         }
+    }
+
+    private static string RuleCachePath(string sessionDirectory, string file) =>
+        Path.Combine(Path.GetDirectoryName(sessionDirectory)!, "rule-cache", file);
+
+    private static void CacheRemoteRules(string sessionDirectory, RoutingConfig configuration)
+    {
+        if (configuration.RemoteRuleFiles.Count == 0)
+            return;
+        try
+        {
+            string cache = Path.GetDirectoryName(RuleCachePath(sessionDirectory, "unused"))!;
+            Directory.CreateDirectory(cache);
+            foreach (string file in configuration.RemoteRuleFiles.Keys)
+            {
+                string cached = Path.Combine(cache, file);
+                File.Copy(Path.Combine(sessionDirectory, file), cached + ".new", true);
+                File.Move(cached + ".new", cached, true);
+                File.SetLastWriteTimeUtc(cached, DateTime.UtcNow);
+            }
+            foreach (var old in new DirectoryInfo(cache).EnumerateFiles("route-rules-*.bin")
+                .Where(file => IsRoutingProviderFile(file.FullName)).OrderByDescending(file => file.LastWriteTimeUtc).Skip(32))
+                old.Delete();
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
     }
 
     private static async Task DownloadRuleFileAsync(Uri address, string path, CancellationToken cancellationToken)
@@ -313,20 +345,37 @@ internal sealed partial class Mihomo
         }
     }
 
+    public async Task<(long Download, long Upload, ActiveConnection[] Connections)> GetTrafficSnapshotAsync(
+        CancellationToken cancellationToken)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(4));
+        using var snapshot = await GetAsync("connections", deadline.Token);
+        var root = snapshot.RootElement;
+        var connections = root.TryGetProperty("connections", out var entries) && entries.ValueKind == JsonValueKind.Array
+            ? entries.EnumerateArray().Select(item => ActiveConnection.From(item, currentConfig)).ToArray() : [];
+        return (root.GetProperty("downloadTotal").GetInt64(), root.GetProperty("uploadTotal").GetInt64(), connections);
+    }
+
     public async Task<ActiveConnection[]> GetConnectionsAsync(CancellationToken cancellationToken)
     {
-        using var snapshot = await GetAsync("connections", cancellationToken);
-        if (!snapshot.RootElement.TryGetProperty("connections", out var entries) || entries.ValueKind != JsonValueKind.Array)
-            return [];
-        return entries.EnumerateArray().Select(item => ActiveConnection.From(item, currentConfig))
-            .OrderByDescending(item => item.Started).ToArray();
+        var (_, _, connections) = await GetTrafficSnapshotAsync(cancellationToken);
+        return connections.OrderByDescending(item => item.Started).ToArray();
     }
+
+    public async Task<bool> TestDnsAsync(CancellationToken cancellationToken)
+    {
+        using var response = await GetAsync("dns/query?name=www.gstatic.com&type=A", cancellationToken);
+        return response.RootElement.TryGetProperty("Answer", out var answers) && answers.ValueKind == JsonValueKind.Array
+            && answers.GetArrayLength() > 0;
+    }
+
 }
 
 internal sealed class RoutingRecoveryException(string message) : IOException(message);
 
 internal sealed record ActiveConnection(string Id, string Host, string Ip, string Port, string Process, string Path,
-    string Network, string Rule, string Route, DateTimeOffset Started, long Upload, long Download)
+    string Network, string Rule, string Route, DateTimeOffset Started, long Upload, long Download, string Outbound)
 {
     public string Destination => $"{(Host.Length != 0 ? Host : Ip.Contains(':') ? $"[{Ip}]" : Ip)}:{Port}";
     public string Details => string.Join("  ·  ", new[] { Process, Network.ToUpperInvariant(), Rule, Route, $"↓ {Download:N0} / ↑ {Upload:N0} Б" }
@@ -344,7 +393,8 @@ internal sealed record ActiveConnection(string Id, string Host, string Ip, strin
             Read(metadata, "destinationPort"), Read(metadata, "process"), Read(metadata, "processPath"),
             Read(metadata, "network"), (Read(item, "rule") + " " + Read(item, "rulePayload")).Trim(),
             route, DateTimeOffset.TryParse(Read(item, "start"), out var start) ? start : default,
-            Count("upload"), Count("download"));
+            Count("upload"), Count("download"),
+            chain.ValueKind == JsonValueKind.Array && chain.GetArrayLength() > 0 ? chain[0].GetString() ?? "" : "");
 
         long Count(string property) => item.TryGetProperty(property, out var value) && value.TryGetInt64(out long count) ? count : 0;
         static string Read(JsonElement obj, string property) => obj.TryGetProperty(property, out var value) ? value.ToString() : "";

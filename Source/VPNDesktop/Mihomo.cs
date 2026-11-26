@@ -42,9 +42,9 @@ internal sealed partial class Mihomo : IAsyncDisposable
         StartAsync((port, controller, secret) => RoutingConfig.Preview(port, controller, secret, content), cancellationToken);
 
     public static Task<Mihomo> StartAsync(Profile source, string node, Profile[] sources, RoutingProfile? profile,
-        bool bypassLan, CancellationToken cancellationToken, string? sessionRoot = null) =>
+        bool bypassLan, CancellationToken cancellationToken, string? sessionRoot = null, NetworkOptions? network = null) =>
         StartAsync((port, controller, secret) => RoutingConfig.Build(port, controller, secret,
-            source, node, sources, profile, bypassLan), cancellationToken, sessionRoot);
+            source, node, sources, profile, bypassLan, network), cancellationToken, sessionRoot);
 
     private static async Task<Mihomo> StartAsync(Func<int, int, string, RoutingConfig> makeConfig,
         CancellationToken cancellationToken, string? sessionRoot = null, string? preparedDirectory = null)
@@ -95,6 +95,8 @@ internal sealed partial class Mihomo : IAsyncDisposable
             session = new Mihomo(directory, api, process, job, port, controller, secret, routing);
             await session.WaitReadyAsync(cancellationToken);
             await session.VerifyAsync(routing, false, cancellationToken);
+            if (preparedDirectory is null)
+                CacheRemoteRules(directory, routing);
             return session;
         }
         catch
@@ -193,15 +195,20 @@ internal sealed partial class Mihomo : IAsyncDisposable
         await VerifyTunAsync(true, cancellationToken);
     }
 
-    public async Task<int?> CheckServerAsync(string name, CancellationToken cancellationToken)
+    public Task<int?> CheckServerAsync(string name, CancellationToken cancellationToken) =>
+        CheckDelayAsync($"providers/proxies/nodes/{Uri.EscapeDataString(name)}/healthcheck", cancellationToken);
+
+    public Task<int?> CheckMainRouteAsync(CancellationToken cancellationToken) =>
+        CheckDelayAsync($"proxies/{RoutingConfig.Main}/delay", cancellationToken);
+
+    private async Task<int?> CheckDelayAsync(string path, CancellationToken cancellationToken)
     {
         string target = Uri.EscapeDataString("https://www.gstatic.com/generate_204");
-        string server = Uri.EscapeDataString(name);
         try
         {
             using var response = await GetAsync(
-                $"providers/proxies/nodes/{server}/healthcheck?url={target}&timeout=6500&expected=204", cancellationToken);
-            return response.RootElement.GetProperty("delay").GetInt32();
+                $"{path}?url={target}&timeout=6500&expected=204", cancellationToken);
+            return response.RootElement.TryGetProperty("delay", out var delay) && delay.TryGetInt32(out int value) ? value : null;
         }
         catch (HttpRequestException error) when (error.StatusCode is HttpStatusCode.ServiceUnavailable or HttpStatusCode.GatewayTimeout)
         {

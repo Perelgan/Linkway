@@ -50,6 +50,10 @@ public partial class MainWindow
         ShowCachedBuilds();
         if (!UpdateBuilds.HasItems)
             UpdateStatus.Text = "Выберите канал, чтобы загрузить сборки.";
+        LoadNetworkSettings();
+        LoadDesktopSettings();
+        LightThemeToggle.IsChecked = clientSettings.LightTheme;
+        ApplyTheme(clientSettings.LightTheme);
         settingsInitialized = true;
     }
 
@@ -77,6 +81,7 @@ public partial class MainWindow
 
     private void UpdateSettingsControls(bool idle, bool connected)
     {
+        NetworkSettings.IsEnabled = idle && !connected && killSwitch is null;
         KillSwitchToggle.IsEnabled = idle && !connected && killSwitch is null && TunMode.IsChecked == true;
         KillSwitchRelease.IsEnabled = idle && !connected && killSwitch is not null;
         KillSwitchRelease.Visibility = !connected && killSwitch is not null ? Visibility.Visible : Visibility.Collapsed;

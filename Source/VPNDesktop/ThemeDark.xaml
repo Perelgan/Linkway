@@ -1,0 +1,21 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <SolidColorBrush x:Key="Surface" Color="#101514"/>
+    <SolidColorBrush x:Key="Sidebar" Color="#131B19"/>
+    <SolidColorBrush x:Key="Panel" Color="#1A2421"/>
+    <SolidColorBrush x:Key="Field" Color="#121A18"/>
+    <SolidColorBrush x:Key="Line" Color="#334741"/>
+    <SolidColorBrush x:Key="Ink" Color="#ECF4F0"/>
+    <SolidColorBrush x:Key="Muted" Color="#A4B9B0"/>
+    <SolidColorBrush x:Key="Accent" Color="#78DFC0"/>
+    <SolidColorBrush x:Key="Selected" Color="#233C34"/>
+    <SolidColorBrush x:Key="Hover" Color="#2C453C"/>
+    <SolidColorBrush x:Key="SelectionLine" Color="#527F70"/>
+    <SolidColorBrush x:Key="Success" Color="#86E6AA"/>
+    <SolidColorBrush x:Key="ConnectedFill" Color="#234437"/>
+    <SolidColorBrush x:Key="StatusWarning" Color="#FBC599"/>
+    <SolidColorBrush x:Key="WarningFill" Color="#49342D"/>
+    <SolidColorBrush x:Key="Route" Color="#669B90"/>
+    <SolidColorBrush x:Key="PrimaryFill" Color="#8BE3C6"/>
+    <SolidColorBrush x:Key="PrimaryInk" Color="#132D24"/>
+</ResourceDictionary>

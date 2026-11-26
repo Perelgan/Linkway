@@ -25,10 +25,15 @@ public partial class MainWindow : Window
     private Profile? Current => ProfilesList.SelectedItem as Profile;
     private ServerChoice? SelectedServer => NodesList.SelectedItem as ServerChoice;
 
-    public MainWindow()
+    public MainWindow() : this(preview: false) { }
+
+    // The rendering test exercises the same BAML and layout without opening the user profile.
+    internal MainWindow(bool preview)
     {
         InitializeComponent();
         ConnectionNav.IsChecked = true;
+        if (preview)
+            return;
         try
         {
             Directory.CreateDirectory(ProfileStore.DirectoryPath);
@@ -61,11 +66,13 @@ public partial class MainWindow : Window
         Closing += CloseWindow;
         Application.Current.SessionEnding += (_, _) =>
         {
+            exitRequested = true;
             try { WindowsProxy.Restore(); }
             catch (Exception) { /* The next launch retries the recovery. */ }
         };
         watchdog.Tick += CheckProcess;
         watchdog.Start();
+        InitializeDesktopIntegration();
     }
 
     private void ShowProfiles(Guid? selected, bool preferSelected = false)
@@ -128,6 +135,9 @@ public partial class MainWindow : Window
         ProfilesPage.Visibility = sender == ProfilesNav ? Visibility.Visible : Visibility.Collapsed;
         CabinetPage.Visibility = sender == CabinetNav ? Visibility.Visible : Visibility.Collapsed;
         SettingsPage.Visibility = sender == SettingsNav ? Visibility.Visible : Visibility.Collapsed;
+        DiagnosticsPage.Visibility = sender == DiagnosticsNav ? Visibility.Visible : Visibility.Collapsed;
+        if (sender == DiagnosticsNav)
+            RefreshStatistics();
         RoutingPage.Visibility = sender == RoutingNav ? Visibility.Visible : Visibility.Collapsed;
         if (sender == RoutingNav)
         {
@@ -135,6 +145,7 @@ public partial class MainWindow : Window
             PollRoutingConnections();
         }
         PageScroll.ScrollToTop();
+        AnimatePage(sender);
     }
 
     private void OpenProfiles(object sender, RoutedEventArgs e)
@@ -221,10 +232,12 @@ public partial class MainWindow : Window
         ConnectionLabel.Text = connected ? "Подключено" : killSwitch is null ? "Отключено" : "Сеть заблокирована";
         ConnectionHeadline.Text = hasServers ? connectionAction : "Добавить сервер";
         StatusDot.Fill = (Brush)FindResource(connected ? "Success" : killSwitch is null ? "Muted" : "StatusWarning");
-        ModeSummary.Text = useTun ? "TUN" : "PROXY";
+        SyncDashboardMode(useTun, ProxyMode.IsEnabled);
+        UpdateDashboardDetails();
         ConnectionDetail.Content = connected ? activeServer?.Node.Name ?? "VPN подключён."
             : hasServers ? SelectedServer?.Node.Name ?? "Выберите сервер."
             : "Вставьте ключ подключения или ссылку на подписку.";
+        UpdateTray();
         ProfileInfo.Text = profile is null ? "Источников пока нет."
             : $"{(profile.Subscription is null ? "Ключ" : "Подписка")} · Серверов: {profile.Nodes.Count(node => node.IsServer)}";
     }
@@ -403,11 +416,18 @@ public partial class MainWindow : Window
     {
         if (session is not null)
         {
+            retryAt = null;
             await StopAsync();
             Message.Text = "Подключение закрыто.";
             return;
         }
-        if (SelectedServer is not { } server)
+        retryAt = null;
+        await ConnectSelectedAsync();
+    });
+
+    private async Task ConnectSelectedAsync()
+    {
+        if (session is not null || SelectedServer is not { } server)
             return;
         var profile = server.Source;
         var selected = server.Node;
@@ -427,7 +447,7 @@ public partial class MainWindow : Window
         WindowsProxy.Restore();
         Message.Text = "Запускаем подключение…";
         var candidate = await Mihomo.StartAsync(profile, selected.Name, profiles.ToArray(), routing.Active,
-            BypassLan.IsChecked == true, lifetime.Token);
+            BypassLan.IsChecked == true, lifetime.Token, network: clientSettings.Network);
         try
         {
             if (useTun)
@@ -443,7 +463,10 @@ public partial class MainWindow : Window
             if (profile.CabinetPlanId is null)
                 Replace(profile with { Selected = selected.Name });
             session = candidate;
+            StartDashboardSession();
             activeServer = server;
+            BeginRecovery();
+            RecordEvent("Подключение установлено");
             UpdateActiveServerRow();
             RefreshRoutingSourceView();
             Message.Text = useTun ? "Адаптер TUN запущен." : $"Системный прокси работает на 127.0.0.1:{session.Port}.";
@@ -452,13 +475,20 @@ public partial class MainWindow : Window
         {
             try
             {
+                if (session == candidate)
+                {
+                    session = null;
+                    activeServer = null;
+                    EndDashboardSession();
+                    UpdateActiveServerRow();
+                }
                 killSwitch?.BlockTunAdapter();
                 WindowsProxy.Restore();
             }
             finally { await candidate.DisposeAsync(); }
             throw;
         }
-    });
+    }
 
     private async void CheckAllServers(object sender, RoutedEventArgs e)
     {
@@ -518,6 +548,7 @@ public partial class MainWindow : Window
             if (server.CheckState == ServerCheckState.Available)
                 reachable++;
             ServerListSummary.Text = $"Проверено {completed} из {servers.Length}";
+            UpdateDashboardDetails();
         }
     }
 
@@ -574,7 +605,13 @@ public partial class MainWindow : Window
     private async Task StopAsync(bool preserveKillSwitch = false)
     {
         var previous = session;
+        if (previous is not null)
+        {
+            RecordSessionEnd();
+            RecordEvent(preserveKillSwitch ? "Сеанс прерван" : "Сеанс завершён");
+        }
         session = null;
+        EndDashboardSession();
         activeServer = null;
         UpdateActiveServerRow();
         RefreshRoutingSourceView();
@@ -600,15 +637,20 @@ public partial class MainWindow : Window
 
     private async void CheckProcess(object? sender, EventArgs e)
     {
+        if (session is { Exited: false } core)
+            await SampleDashboardAsync(core);
         if (session?.Exited == true)
         {
             await RunAsync(async () =>
             {
+                ScheduleRecovery();
                 await StopAsync(preserveKillSwitch: true);
+                NotifyTray("Mihomo завершился.");
                 Message.Text = killSwitch is null ? "Mihomo завершился. Подключение закрыто."
                     : "Mihomo завершился. Kill Switch удерживает блокировку сети.";
             });
         }
+        await CheckRecoveryAsync();
     }
 
     private async void CloseWindow(object? sender, CancelEventArgs e)
@@ -618,7 +660,13 @@ public partial class MainWindow : Window
         e.Cancel = true;
         if (closing)
             return;
+        if (clientSettings.MinimizeToTray && tray is not null && !exitRequested && pendingUpdate is null)
+        {
+            Hide();
+            return;
+        }
         closing = true;
+        DisposeDesktopIntegration();
         watchdog.Stop();
         routingMonitor.Stop();
         lifetime.Cancel();

@@ -1,8 +1,16 @@
+using System.IO;
 using System.Net;
+using System.Net.Http;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using VPNDesktop;
+
+if (args.Contains("--ui", StringComparer.Ordinal))
+{
+    await UiSmoke.RunAsync();
+    return;
+}
 
 using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(75));
 var token = timeout.Token;
@@ -301,6 +309,36 @@ try
     ExpectInvalid(() => SubscriptionDevice.CheckHeaders(refusal.Headers), "Unsupported client status is detected");
     Require(!new Node("🚫 HWID Error", "Vless").IsServer && !new Node("App not supported", "Vless").IsServer &&
         new Node("Германия 1", "Vless").IsServer, "Provider HWID placeholders never appear as servers");
+
+    var network = new NetworkOptions(ServerStrategy.Fallback, FakeIp: false, RefreshGeoData: true,
+        Resolvers: "tls://1.1.1.1", DomainResolvers: "example.test=https://1.0.0.1/dns-query",
+        RuleSets: "https://rules.example.test/domain.txt | domain | text | REJECT");
+    using (var payload = JsonDocument.Parse(RoutingConfig.Build(1234, 1235, "test", fullSource, "Primary",
+        [fullSource], RoutingProfile.Create("Network options"), false, network).Payload(true)))
+    {
+        var dns = payload.RootElement.GetProperty("dns");
+        Require(dns.GetProperty("enhanced-mode").GetString() == "redir-host" &&
+            dns.GetProperty("nameserver")[0].GetString() == "tls://1.1.1.1#VPNDesktop-Selected" &&
+            dns.GetProperty("nameserver-policy").GetProperty("+.example.test").GetString() ==
+                "https://1.0.0.1/dns-query#VPNDesktop-Selected", "DoT, split DoH and DNS through main group");
+        Require(payload.RootElement.GetProperty("rule-providers").EnumerateObject().Any() &&
+            payload.RootElement.GetProperty("rules").EnumerateArray().Any(rule => rule.GetString() ==
+                "RULE-SET,VPNDesktop-UserRules-1,REJECT"), "User HTTPS rule set is managed by Mihomo");
+        Require(payload.RootElement.GetProperty("tun").GetProperty("dns-hijack").GetArrayLength() == 2,
+            "TUN captures UDP and TCP DNS");
+    }
+    ExpectInvalid(() => (network with { Resolvers = "tls://1.1.1.1#DIRECT" }).ParseDns("", RoutingConfig.Main),
+        "DNS endpoint cannot change the configured outbound");
+    ExpectInvalid(() => (network with { RuleSets = "http://example.test | domain | text | VPN" })
+        .ParseRuleSets(RoutingConfig.Main).ToArray(), "Rule sets require HTTPS");
+    foreach (var strategy in new[] { ServerStrategy.Fastest, ServerStrategy.Fallback, ServerStrategy.Balance })
+    {
+        var candidate = network with { Strategy = strategy, RuleSets = "" };
+        await using var groupCore = await Mihomo.StartAsync(fullSource, "Primary", [fullSource],
+            RoutingProfile.Create("Group check") with { UseSubscriptionRules = false }, false, token, scratch, candidate);
+        var totals = await groupCore.GetTrafficSnapshotAsync(token);
+        Require(totals.Download >= 0 && totals.Upload >= 0, $"Mihomo verifies {strategy} members and exposes traffic counters");
+    }
 
     var subscriptionProfile = RoutingProfile.Create("From subscription");
     await core.ApplyRoutingAsync(fullSource, "Primary", [fullSource], subscriptionProfile, false, () => { }, token);

@@ -109,13 +109,14 @@ internal sealed class RoutingConfig
     }
 
     public static RoutingConfig Build(int port, int controller, string secret, Profile primary, string node,
-        IEnumerable<Profile> sources, RoutingProfile? profile, bool bypassLan)
+        IEnumerable<Profile> sources, RoutingProfile? profile, bool bypassLan, NetworkOptions? network = null)
     {
         profile = profile is null ? RoutingProfile.Create("Основной") : RoutingProfiles.Upgrade(profile);
         var config = new RoutingConfig(port, controller, secret);
         var catalog = Catalog(sources.Prepend(primary));
         var providers = new Dictionary<string, object>();
         var groups = new List<object>();
+        var ruleProviders = new Dictionary<string, object>();
         var serverGroups = new Dictionary<RouteServer, string>();
         var primaryServer = new RouteServer(RouteServer.SourceKey(primary), node);
         string source = primaryServer.Source;
@@ -127,7 +128,20 @@ internal sealed class RoutingConfig
             .ToDictionary(choice => choice.Group, StringComparer.Ordinal);
         var aliases = new Dictionary<string, string>(StringComparer.Ordinal);
         var pending = new HashSet<string>(StringComparer.Ordinal);
-        AddServer(primaryServer, Main);
+        if (network?.Strategy is ServerStrategy.Fastest or ServerStrategy.Fallback or ServerStrategy.Balance)
+        {
+            var members = primary.Nodes.Where(IsRoutable).Select(candidate => candidate.Name)
+                .Prepend(node).Distinct(StringComparer.Ordinal).Take(64)
+                .Select(name => AddServer(new RouteServer(source, name))).ToArray();
+            AddHealthGroup(Main, members, network.Strategy switch
+            {
+                ServerStrategy.Fastest => "url-test",
+                ServerStrategy.Balance => "load-balance",
+                _ => "fallback"
+            });
+        }
+        else
+            AddServer(primaryServer, Main);
 
         foreach (var rule in profile.Rules.Where(rule => rule.Enabled))
         {
@@ -150,23 +164,38 @@ internal sealed class RoutingConfig
                 "IP-CIDR6,fe80::/10,DIRECT,no-resolve"
             ]);
         }
+        if (network is not null)
+        {
+            int index = 0;
+            foreach (var (address, behavior, format, outbound) in network.ParseRuleSets(Main))
+            {
+                string alias = $"VPNDesktop-UserRules-{++index}";
+                string path = $"route-rules-{Hash(address.AbsoluteUri + "\\n" + behavior + "\\n" + format)}.bin";
+                config.RemoteRuleFiles.TryAdd(path, address);
+                config.ExpectedRuleProviders.Add(alias, $"Пользовательский набор {index}");
+                ruleProviders.Add(alias, new { type = "file", path = "./" + path, behavior, format });
+                WriteRule($"RULE-SET,{alias}", outbound);
+            }
+        }
         if (profile.UseSubscriptionRules && subscription is not null)
             AddSubscriptionRules(subscription);
         if (!config.Rules.Any(rule => rule.StartsWith("MATCH,", StringComparison.Ordinal)))
             AddRule("MATCH", profile.Default);
 
-        if (serverGroups.Count > 1)
-            AddFallback(DnsGroup, serverGroups.Values.ToArray());
-        config.SetDns(serverGroups.Count > 1 ? DnsGroup : Main);
+        bool useDnsGroup = serverGroups.Count > 1 && !config.ExpectedGroups.ContainsKey(Main);
+        if (useDnsGroup)
+            AddHealthGroup(DnsGroup, serverGroups.Values.ToArray());
+        config.SetDns(useDnsGroup ? DnsGroup : Main, network);
+        if (ruleProviders.Count > 0)
+            config.configuration["rule-providers"] = ruleProviders;
         config.configuration["proxy-providers"] = providers;
         config.configuration["proxy-groups"] = groups;
         config.configuration["geodata-mode"] = true;
-        config.configuration["geo-auto-update"] = false;
+        config.configuration["geo-auto-update"] = network?.RefreshGeoData == true && config.GeoFiles.Count > 0;
         return config;
 
         void AddSubscriptionRules(SubscriptionRouting subscription)
         {
-            var ruleProviders = new Dictionary<string, object>();
             var feedAliases = new Dictionary<string, string>(StringComparer.Ordinal);
 
             foreach (var rule in subscription.Rules)
@@ -187,8 +216,6 @@ internal sealed class RoutingConfig
                 if (rule.Match == "MATCH")
                     break;
             }
-            if (ruleProviders.Count > 0)
-                config.configuration["rule-providers"] = ruleProviders;
 
             string AddFeed(string name)
             {
@@ -289,12 +316,12 @@ internal sealed class RoutingConfig
             return alias;
         }
 
-        void AddFallback(string alias, string[] members)
+        void AddHealthGroup(string alias, string[] members, string strategy = "fallback")
         {
             config.ExpectedGroups.Add(alias, members);
             groups.Add(new Dictionary<string, object>
             {
-                ["name"] = alias, ["type"] = "fallback", ["proxies"] = members,
+                ["name"] = alias, ["type"] = strategy, ["proxies"] = members,
                 ["url"] = HealthUrl, ["expected-status"] = "204", ["interval"] = 120,
                 ["timeout"] = 5000, ["lazy"] = false, ["empty-fallback"] = "REJECT"
             });
@@ -324,17 +351,23 @@ internal sealed class RoutingConfig
 
     private static string Hash(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
 
-    private void SetDns(string outbound) => configuration["dns"] = new Dictionary<string, object>
+    private void SetDns(string outbound, NetworkOptions? options = null)
     {
-        ["enable"] = true,
-        ["ipv6"] = true,
-        ["enhanced-mode"] = "fake-ip",
-        ["fake-ip-range6"] = "fd00:198:18::1/64",
-        ["fake-ip-filter"] = new[] { "*.local", "localhost" },
-        ["default-nameserver"] = new[] { Dns },
-        ["proxy-server-nameserver"] = new[] { Dns },
-        ["nameserver"] = new[] { $"{Dns}#{outbound}" }
-    };
+        options ??= new();
+        var (resolvers, policies) = options.ParseDns(Dns, outbound);
+        configuration["dns"] = new Dictionary<string, object>
+        {
+            ["enable"] = true,
+            ["ipv6"] = true,
+            ["enhanced-mode"] = options.FakeIp ? "fake-ip" : "redir-host",
+            ["fake-ip-range6"] = "fd00:198:18::1/64",
+            ["fake-ip-filter"] = new[] { "*.local", "localhost" },
+            ["default-nameserver"] = new[] { Dns },
+            ["proxy-server-nameserver"] = new[] { Dns },
+            ["nameserver"] = resolvers,
+            ["nameserver-policy"] = policies
+        };
+    }
 
     private static string Matcher(RouteRule rule)
     {

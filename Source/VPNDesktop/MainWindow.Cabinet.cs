@@ -23,6 +23,8 @@ public partial class MainWindow
             if (cabinetSession is not null)
                 await SyncCabinetAsync();
         });
+        if (clientSettings.AutoConnect && SelectedServer is not null)
+            await RunAsync(ConnectSelectedAsync);
     }
 
     private void UpdateCabinetControls(bool idle, bool connected)
