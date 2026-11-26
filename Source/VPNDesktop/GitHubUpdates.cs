@@ -10,10 +10,12 @@ using System.Text.RegularExpressions;
 
 namespace VPNDesktop;
 
-internal sealed record GitHubRelease(Version Version, Uri Download, byte[] Digest, long Size);
+internal sealed record GitHubRelease(UpdateVersion Version, Uri Download, byte[] Digest, long Size);
 
 internal static partial class GitHubUpdates
 {
+    private const string Repository = "Perelgan/VPNDesktop";
+    public const string ReleasesUrl = $"https://github.com/{Repository}/releases";
     private const string AssetName = "VPNDesktop-win-x64.zip";
     private const long MaxArchive = 256L * 1024 * 1024;
     private const long MaxExpanded = 512L * 1024 * 1024;
@@ -22,65 +24,69 @@ internal static partial class GitHubUpdates
     public static Version InstalledVersion { get; } =
         Version.Parse(typeof(App).Assembly.GetName().Version!.ToString(3));
 
-    public static string ParseRepository(string input)
-    {
-        input = input.Trim();
-        if (Uri.TryCreate(input, UriKind.Absolute, out var uri))
-        {
-            if (!IsHttpsHost(uri, "github.com") || uri.Query.Length != 0 || uri.Fragment.Length != 0)
-                throw new IOException("Введите ссылку на публичный репозиторий GitHub.");
-            input = uri.AbsolutePath.Trim('/');
-        }
+    public static UpdateVersion InstalledRelease { get; } =
+        ParseProductVersion(typeof(App).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion)
+        ?? new(InstalledVersion, null);
 
-        var parts = input.TrimEnd('/').Split('/');
-        if (parts.Length < 2 || (parts.Length > 2 && parts[2] != "releases")
-            || !OwnerPattern().IsMatch(parts[0]) || !RepositoryPattern().IsMatch(parts[1])
-            || parts[1] is "." or "..")
-            throw new IOException("Введите ссылку вида https://github.com/владелец/репозиторий.");
-
-        return $"{parts[0]}/{parts[1]}";
-    }
-
-    public static async Task<GitHubRelease?> CheckAsync(string repository, CancellationToken cancellationToken)
+    public static async Task<GitHubRelease?> CheckAsync(bool experimental, CancellationToken cancellationToken)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(20));
-        using var request = MakeRequest(new Uri($"https://api.github.com/repos/{repository}/releases/latest"));
-        request.Headers.Accept.ParseAdd("application/vnd.github+json");
-        request.Headers.Add("X-GitHub-Api-Version", "2026-03-10");
-        using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token);
-        if (response.StatusCode == HttpStatusCode.NotFound)
-            throw new IOException("GitHub не нашёл опубликованный релиз в этом репозитории.");
-        if (!response.IsSuccessStatusCode)
-            throw new IOException($"GitHub вернул HTTP {(int)response.StatusCode}.");
-
-        await using var stream = await response.Content.ReadAsStreamAsync(deadline.Token);
-        using var json = await JsonDocument.ParseAsync(stream, cancellationToken: deadline.Token);
-        var release = json.RootElement;
-        string tag = release.GetProperty("tag_name").GetString() ?? "";
-        if (!ReleaseTagPattern().IsMatch(tag) || !Version.TryParse(tag.TrimStart('v'), out var version))
-            throw new IOException("Для релиза на GitHub нужен тег вида v1.2.3.");
-        if (version <= InstalledVersion)
-            return null;
-
-        foreach (var asset in release.GetProperty("assets").EnumerateArray())
+        (UpdateVersion Version, string Tag, JsonElement Asset)? latest = null;
+        for (int page = 1; ; page++)
         {
-            if (asset.GetProperty("name").GetString() != AssetName)
-                continue;
+            using var request = MakeRequest(new Uri($"https://api.github.com/repos/{Repository}/releases?per_page=100&page={page}"));
+            request.Headers.Accept.ParseAdd("application/vnd.github+json");
+            request.Headers.Add("X-GitHub-Api-Version", "2026-03-10");
+            using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token);
+            if (response.StatusCode == HttpStatusCode.NotFound)
+                throw new IOException("Репозиторий обновлений недоступен на GitHub.");
+            if (!response.IsSuccessStatusCode)
+                throw new IOException($"GitHub вернул HTTP {(int)response.StatusCode}.");
 
-            string? digest = asset.TryGetProperty("digest", out var value) ? value.GetString() : null;
-            if (digest is null || !DigestPattern().IsMatch(digest))
-                throw new IOException("В карточке файла GitHub отсутствует SHA-256.");
-            if (!asset.TryGetProperty("size", out var length) || !length.TryGetInt64(out long size)
-                || size <= 0 || size > MaxArchive)
-                throw new IOException("Размер файла обновления выходит за допустимый предел.");
-
-            var url = new Uri($"https://github.com/{repository}/releases/download/{tag}/{AssetName}");
-            if (!string.Equals(asset.GetProperty("browser_download_url").GetString(), url.AbsoluteUri, StringComparison.OrdinalIgnoreCase))
-                throw new IOException("GitHub вернул неожиданный адрес файла обновления.");
-            return new GitHubRelease(version, url, Convert.FromHexString(digest[7..]), size);
+            await using var stream = await response.Content.ReadAsStreamAsync(deadline.Token);
+            using var json = await JsonDocument.ParseAsync(stream, cancellationToken: deadline.Token);
+            var candidate = SelectRelease(json.RootElement, experimental, latest?.Version ?? InstalledRelease);
+            if (candidate is { } newer)
+                latest = (newer.Version, newer.Tag, newer.Asset.Clone());
+            if (!response.Headers.TryGetValues("Link", out var links) || !links.Any(link => link.Contains("rel=\"next\"", StringComparison.Ordinal)))
+                break;
         }
-        throw new IOException($"В релизе v{version} нет файла {AssetName}.");
+
+        if (latest is not { } selected)
+            return null;
+        var (version, tag, asset) = selected;
+        string? digest = asset.TryGetProperty("digest", out var value) ? value.GetString() : null;
+        if (digest is null || !DigestPattern().IsMatch(digest))
+            throw new IOException("В карточке файла GitHub отсутствует SHA-256.");
+        if (!asset.TryGetProperty("size", out var length) || !length.TryGetInt64(out long size) || size <= 0 || size > MaxArchive)
+            throw new IOException("Размер файла обновления выходит за допустимый предел.");
+
+        var url = new Uri($"{ReleasesUrl}/download/{tag}/{AssetName}");
+        if (!string.Equals(asset.GetProperty("browser_download_url").GetString(), url.AbsoluteUri, StringComparison.Ordinal))
+            throw new IOException("GitHub вернул неожиданный адрес файла обновления.");
+        return new GitHubRelease(version, url, Convert.FromHexString(digest[7..]), size);
+    }
+
+    internal static (UpdateVersion Version, string Tag, JsonElement Asset)? SelectRelease(
+        JsonElement releases, bool experimental, UpdateVersion installed)
+    {
+        (UpdateVersion Version, string Tag, JsonElement Asset)? latest = null;
+        foreach (var release in releases.EnumerateArray())
+        {
+            if (release.GetProperty("draft").GetBoolean())
+                continue;
+            bool prerelease = release.GetProperty("prerelease").GetBoolean();
+            string tag = release.GetProperty("tag_name").GetString() ?? "";
+            if (UpdateVersion.Parse(tag) is not { } version || prerelease != (version.Prerelease is not null)
+                || (!experimental && prerelease) || version.CompareTo(latest?.Version ?? installed) <= 0)
+                continue;
+            var asset = release.GetProperty("assets").EnumerateArray().FirstOrDefault(item =>
+                item.GetProperty("name").GetString() == AssetName && item.GetProperty("state").GetString() == "uploaded");
+            if (asset.ValueKind != JsonValueKind.Undefined)
+                latest = (version, tag, asset);
+        }
+        return latest;
     }
 
     public static async Task<string> PrepareAsync(GitHubRelease release, IProgress<int> progress, CancellationToken cancellationToken)
@@ -203,8 +209,8 @@ internal static partial class GitHubUpdates
                 throw new IOException("В архиве нет полной сборки VPN Desktop.");
         if (!Directory.Exists(Path.Combine(payload, "Languages")) || !Directory.Exists(Path.Combine(payload, "Licenses")))
             throw new IOException("В архиве отсутствуют языковые ресурсы или лицензии.");
-        var actualVersion = AssemblyName.GetAssemblyName(Path.Combine(payload, "Libraries", "VPNDesktop.dll")).Version;
-        if (actualVersion?.ToString(3) != release.Version.ToString(3))
+        var actualVersion = ParseProductVersion(FileVersionInfo.GetVersionInfo(Path.Combine(payload, "Libraries", "VPNDesktop.dll")).ProductVersion);
+        if (actualVersion != release.Version)
             throw new IOException("Версия приложения внутри архива отличается от тега GitHub.");
     }
 
@@ -249,12 +255,9 @@ internal static partial class GitHubUpdates
     private static bool IsHttpsHost(Uri uri, string host) => uri.Scheme == "https" && uri.IsDefaultPort
         && uri.UserInfo.Length == 0 && uri.IdnHost.Equals(host, StringComparison.OrdinalIgnoreCase);
 
-    [GeneratedRegex(@"\A[a-zA-Z0-9][a-zA-Z0-9-]{0,38}\z")]
-    private static partial Regex OwnerPattern();
-    [GeneratedRegex(@"\A[a-zA-Z0-9_.-]{1,100}\z")]
-    private static partial Regex RepositoryPattern();
-    [GeneratedRegex(@"\Av?\d+\.\d+\.\d+\z")]
-    private static partial Regex ReleaseTagPattern();
+    private static UpdateVersion? ParseProductVersion(string? version) =>
+        version is null ? null : UpdateVersion.Parse(version.Split('+', 2)[0]);
+
     [GeneratedRegex(@"\Asha256:[a-fA-F0-9]{64}\z")]
     private static partial Regex DigestPattern();
     [GeneratedRegex(@"\A(?:COM|LPT)[1-9¹²³]\z")]

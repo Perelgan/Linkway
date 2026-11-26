@@ -3,7 +3,7 @@ using System.Text.Json;
 
 namespace VPNDesktop;
 
-internal sealed record ClientSettings(bool Tun = false, bool DirectLan = false, string? Repository = null, bool KillSwitch = false)
+internal sealed record ClientSettings(bool Tun = false, bool DirectLan = false, bool KillSwitch = false, bool ExperimentalUpdates = false)
 {
     private static readonly string PathName = Path.Combine(ProfileStore.DirectoryPath, "settings.json");
 

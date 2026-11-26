@@ -1,6 +1,6 @@
+using System.Diagnostics;
 using System.IO;
 using System.Windows;
-using System.Windows.Controls;
 
 namespace VPNDesktop;
 
@@ -25,11 +25,8 @@ public partial class MainWindow
         (clientSettings.Tun ? TunMode : ProxyMode).IsChecked = true;
         BypassLan.IsChecked = clientSettings.DirectLan;
         KillSwitchToggle.IsChecked = clientSettings.KillSwitch;
-        RepositoryBox.Text = clientSettings.Repository is { } repo ? $"https://github.com/{repo}" : "";
-        AppVersionLabel.Text = $"Версия {GitHubUpdates.InstalledVersion}";
-        UpdateStatus.Text = clientSettings.Repository is null
-            ? "Репозиторий пока не указан."
-            : "Можно проверить наличие новой версии.";
+        (clientSettings.ExperimentalUpdates ? ExperimentalUpdates : StableUpdates).IsChecked = true;
+        AppVersionLabel.Text = $"Версия {GitHubUpdates.InstalledRelease}";
         settingsInitialized = true;
     }
 
@@ -64,10 +61,9 @@ public partial class MainWindow
             ? connected ? "Активен. Windows блокирует соединения приложений вне адаптера TUN."
                 : "Доступ заблокирован. Подключитесь снова или снимите блокировку."
             : "Для режима TUN. При сбое ядра Windows удерживает блокировку до переподключения, снятия блокировки или выхода из клиента.";
-        bool hasAddress = !string.IsNullOrWhiteSpace(RepositoryBox.Text);
-        RepositoryBox.IsEnabled = idle;
-        SaveRepositoryButton.IsEnabled = idle && (hasAddress || clientSettings.Repository is not null);
-        CheckUpdateButton.IsEnabled = idle && hasAddress;
+        StableUpdates.IsEnabled = idle;
+        ExperimentalUpdates.IsEnabled = idle;
+        CheckUpdateButton.IsEnabled = idle;
         InstallUpdateButton.Visibility = availableUpdate is null ? Visibility.Collapsed : Visibility.Visible;
         InstallUpdateButton.IsEnabled = idle && !connected;
         InstallUpdateButton.ToolTip = connected
@@ -91,46 +87,46 @@ public partial class MainWindow
         killSwitch = null;
     }
 
-    private void RepositoryChanged(object sender, TextChangedEventArgs e)
+    private void UpdateChannelChanged(object sender, RoutedEventArgs e)
     {
         if (!settingsInitialized)
             return;
+        var updated = clientSettings with { ExperimentalUpdates = ReferenceEquals(sender, ExperimentalUpdates) };
+        if (updated == clientSettings)
+            return;
         availableUpdate = null;
-        UpdateStatus.Text = string.IsNullOrWhiteSpace(RepositoryBox.Text)
-            ? "Репозиторий не указан."
-            : "Можно проверить наличие новой версии.";
+        UpdateStatus.Text = "";
+        try
+        {
+            updated.Save();
+        }
+        catch (Exception)
+        {
+            UpdateStatus.Text = "Не удалось сохранить канал обновлений на диск.";
+        }
+        clientSettings = updated;
         UpdateControls();
     }
 
-    private void StoreRepository(string? repository)
+    private void OpenUpdateReleases(object sender, RoutedEventArgs e)
     {
-        if (clientSettings.Repository == repository)
-            return;
-        var updated = clientSettings with { Repository = repository };
-        updated.Save();
-        clientSettings = updated;
+        try
+        {
+            Process.Start(new ProcessStartInfo(GitHubUpdates.ReleasesUrl) { UseShellExecute = true })?.Dispose();
+        }
+        catch (System.ComponentModel.Win32Exception)
+        {
+            Message.Text = "Не удалось открыть GitHub в браузере.";
+        }
     }
-
-    private async void SaveRepository(object sender, RoutedEventArgs e) => await RunAsync(() =>
-    {
-        string? repository = string.IsNullOrWhiteSpace(RepositoryBox.Text)
-            ? null : GitHubUpdates.ParseRepository(RepositoryBox.Text);
-        StoreRepository(repository);
-        RepositoryBox.Text = repository is null ? "" : $"https://github.com/{repository}";
-        UpdateStatus.Text = repository is null ? "Адрес репозитория удалён." : "Адрес репозитория сохранён.";
-        return Task.CompletedTask;
-    });
 
     private async void CheckForUpdates(object sender, RoutedEventArgs e) => await RunAsync(async () =>
     {
         availableUpdate = null;
-        string repository = GitHubUpdates.ParseRepository(RepositoryBox.Text);
-        StoreRepository(repository);
-        RepositoryBox.Text = $"https://github.com/{repository}";
         UpdateStatus.Text = "Проверяем релизы на GitHub…";
         try
         {
-            availableUpdate = await GitHubUpdates.CheckAsync(repository, lifetime.Token);
+            availableUpdate = await GitHubUpdates.CheckAsync(clientSettings.ExperimentalUpdates, lifetime.Token);
             UpdateStatus.Text = availableUpdate is { } release
                 ? $"Доступна версия {release.Version}. После загрузки приложение закроется для установки."
                 : "Новой версии нет.";

@@ -11,6 +11,31 @@ Directory.CreateDirectory(scratch);
 
 try
 {
+    var oldSettings = JsonSerializer.Deserialize<ClientSettings>("""{"Tun":true,"Repository":"another/project","KillSwitch":true}""");
+    Require(oldSettings is { Tun: true, KillSwitch: true, ExperimentalUpdates: false },
+        "Existing settings migrate to the stable update channel");
+    using (var releases = JsonDocument.Parse("""
+        [
+          {"tag_name":"v1.3.0-beta.2","prerelease":true,"draft":false,"assets":[{"name":"VPNDesktop-win-x64.zip","state":"uploaded"}]},
+          {"tag_name":"v1.2.0","prerelease":false,"draft":false,"assets":[{"name":"VPNDesktop-win-x64.zip","state":"uploaded"}]},
+          {"tag_name":"v1.3.0-beta.10","prerelease":true,"draft":false,"assets":[{"name":"VPNDesktop-win-x64.zip","state":"uploaded"}]},
+          {"tag_name":"v1.4.0","prerelease":false,"draft":true,"assets":[{"name":"VPNDesktop-win-x64.zip","state":"uploaded"}]},
+          {"tag_name":"v1.5.0","prerelease":false,"draft":false,"assets":[]},
+          {"tag_name":"v1.6.0-beta.1","prerelease":false,"draft":false,"assets":[{"name":"VPNDesktop-win-x64.zip","state":"uploaded"}]}
+        ]
+        """))
+    {
+        var installed = UpdateVersion.Parse("1.1.0")!;
+        var stable = GitHubUpdates.SelectRelease(releases.RootElement, false, installed);
+        var experimental = GitHubUpdates.SelectRelease(releases.RootElement, true, installed);
+        Require(stable?.Tag == "v1.2.0", "Stable channel excludes drafts, prereleases and releases without a package");
+        Require(experimental?.Tag == "v1.3.0-beta.10", "Experimental channel sorts numeric prerelease identifiers");
+        Require(GitHubUpdates.SelectRelease(releases.RootElement, false, experimental!.Value.Version) is null,
+            "Switching to stable does not downgrade");
+        Require(GitHubUpdates.SelectRelease(releases.RootElement, false, UpdateVersion.Parse("1.2.0-rc.1")!)?.Tag == "v1.2.0",
+            "A stable release supersedes a prerelease of the same version");
+    }
+
     await using var primary = new HttpEndpoint(IPAddress.Loopback, "primary");
     await using var secondary = new HttpEndpoint(IPAddress.Loopback, "secondary");
     await using var direct = new HttpEndpoint(IPAddress.Loopback, "direct");
