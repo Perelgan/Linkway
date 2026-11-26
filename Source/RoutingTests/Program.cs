@@ -1,0 +1,487 @@
+using System.Net;
+using System.Net.Sockets;
+using System.Text;
+using System.Text.Json;
+using VPNDesktop;
+
+using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(75));
+var token = timeout.Token;
+string scratch = Path.Combine(Path.GetTempPath(), "VPNDesktop-routing-tests", Guid.NewGuid().ToString("N"));
+Directory.CreateDirectory(scratch);
+
+try
+{
+    await using var primary = new HttpEndpoint(IPAddress.Loopback, "primary");
+    await using var secondary = new HttpEndpoint(IPAddress.Loopback, "secondary");
+    await using var direct = new HttpEndpoint(IPAddress.Loopback, "direct");
+    await using var dead = new HttpEndpoint(IPAddress.Loopback, "dead");
+    int deadPort = dead.Port;
+    await dead.DisposeAsync();
+
+    Profile first = Source("Same name", primary.Port);
+    Profile second = Source("Same name", secondary.Port);
+    Profile unavailable = Source("Unavailable", deadPort);
+    var sources = new[] { first, second, unavailable };
+    var secondServer = new RouteServer(RouteServer.SourceKey(second), "Same name");
+    var deadServer = new RouteServer(RouteServer.SourceKey(unavailable), "Unavailable");
+    var group = new RouteGroup(Guid.NewGuid(), "Test group", [secondServer, deadServer]);
+    var draft = RoutingProfile.Create("Integration") with
+    {
+        Default = new(RouteKind.Direct),
+        Rules =
+        [
+            new(RouteMatch.Domain, "primary.test", RouteProtocol.Any, new(RouteKind.Main)),
+            new(RouteMatch.DomainSuffix, "secondary.test", RouteProtocol.Tcp, new(RouteKind.Server, secondServer)),
+            new(RouteMatch.Domain, "unavailable.test", RouteProtocol.Any, new(RouteKind.Server, deadServer)),
+            new(RouteMatch.Domain, "blocked.test", RouteProtocol.Any, new(RouteKind.Reject)),
+            new(RouteMatch.Domain, "group.test", RouteProtocol.Any, new(RouteKind.Group, Group: group.Id)),
+            new(RouteMatch.Subnet, "2001:db8::/32", RouteProtocol.Tcp, new(RouteKind.Main)),
+            new(RouteMatch.Application, @"C:\Program Files (x86)\Test\app,(.exe", RouteProtocol.Udp, new(RouteKind.Reject)),
+            new(RouteMatch.Domain, "disabled.test", RouteProtocol.Any, new(RouteKind.Main), Enabled: false)
+        ],
+        Groups = [group]
+    };
+    string export = Path.Combine(scratch, "routing.json");
+    RoutingProfiles.Export(export, draft);
+    var imported = RoutingProfiles.Import(export);
+    Require(imported.Id != draft.Id && imported.Groups.Length == 0 &&
+        imported.Rules.SequenceEqual(draft.Rules.Select(rule => rule.Target.Kind == RouteKind.Group
+            ? rule with { Target = new(RouteKind.Server, secondServer) } : rule)), "Profile JSON and migration to concrete server");
+    var bad = File.ReadAllText(export).Replace("\"Tcp\"", "\"UNKNOWN\"");
+    File.WriteAllText(export, bad);
+    ExpectInvalid(() => RoutingProfiles.Import(export), "Unknown enum in imported JSON");
+    ExpectInvalid(() => RoutingProfiles.Normalize(RouteMatch.Port, "0-80"), "Invalid port");
+    ExpectInvalid(() => RoutingProfiles.Normalize(RouteMatch.Domain, "example.org,REJECT"), "Rule delimiter injection");
+    ExpectInvalid(() => RoutingProfiles.Normalize(RouteMatch.Subnet, "10.0.0.0/33"), "Invalid CIDR");
+    Require(RoutingProfiles.Normalize(RouteMatch.DomainSuffix, "*.пример.рф.") == "xn--e1afmkfd.xn--p1ai", "IDN domain");
+    Require(ApplicationInventory.Running().Length > 0, "Running application inventory");
+    Require(ApplicationInventory.Installed().Length > 0, "Installed application inventory");
+
+    string geo = Path.Combine(scratch, "geodata");
+    Directory.CreateDirectory(geo);
+    var localInGeoIp = Field(2, [.. Field(1, [127, 0, 0, 0]), 16, 8]);
+    var geoHost = Field(2, [8, 3, .. TextField(2, "geo.test")]);
+    File.WriteAllBytes(Path.Combine(geo, "GeoIP.dat"),
+        [.. Field(1, [.. TextField(1, "CN"), .. localInGeoIp]), .. Field(1, [.. TextField(1, "RU"), .. localInGeoIp])]);
+    File.WriteAllBytes(Path.Combine(geo, "GeoSite.dat"),
+        [.. Field(1, [.. TextField(1, "CN"), .. geoHost]), .. Field(1, [.. TextField(1, "TEST"), .. geoHost])]);
+
+    await using var core = await Mihomo.StartAsync(first, "Same name", sources, draft, false, token, scratch);
+    Require(await Request("primary.test") == "primary", "Main route");
+    Require(await Request("a.secondary.test") == "secondary", "Parallel route from another source with an identical node name");
+    Require(await Request("group.test") == "secondary", "Group route via its first member");
+    Require(await Request("blocked.test") != "direct", "Explicit reject");
+    Require(await Request("unavailable.test") != "direct", "Unavailable VPN stays closed");
+    Require(await Request("127.0.0.1") == "direct", "IPv4 direct");
+    Require(await Request("[2001:db8::8]:443", explicitPort: true) == "primary", "IPv6 subnet dispatch to VPN");
+
+    using (var connection = await OpenRequest("a.secondary.test", "/hold"))
+    {
+        await secondary.HoldStarted.Task.WaitAsync(token);
+        var snapshot = await core.GetConnectionsAsync(token);
+        Require(snapshot.Any(item => item.Host == "a.secondary.test" && item.Network == "tcp" &&
+            item.Route.Contains("Same name") && item.Path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)),
+            "Active connections with process, hostname, protocol and actual server");
+    }
+
+    using var echo = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
+    int udpPort = ((IPEndPoint)echo.Client.LocalEndPoint!).Port;
+    using var udp = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
+    using var socks = await TcpClientAsync(core.Port);
+    var control = socks.GetStream();
+    await control.WriteAsync(new byte[] { 5, 1, 0 }, token);
+    var negotiation = new byte[2];
+    await control.ReadExactlyAsync(negotiation, token);
+    Require(negotiation.SequenceEqual(new byte[] { 5, 0 }), "SOCKS5 on the local proxy port");
+    await control.WriteAsync(new byte[] { 5, 3, 0, 1, 127, 0, 0, 1, 0, 0 }, token);
+    var association = new byte[10];
+    await control.ReadExactlyAsync(association, token);
+    Require(association[1] == 0 && association[3] == 1, "SOCKS5 UDP association");
+    int relay = association[8] * 256 + association[9];
+    var udpGuard = new RouteRule(RouteMatch.Port, udpPort.ToString(), RouteProtocol.Any, new(RouteKind.Main));
+    var withUdpGuard = draft with { Rules = [udpGuard, .. draft.Rules] };
+    await core.ApplyRoutingAsync(first, "Same name", sources, withUdpGuard, false, () => { }, token);
+    await SendDatagram("blocked");
+    using (var brief = CancellationTokenSource.CreateLinkedTokenSource(token))
+    {
+        brief.CancelAfter(700);
+        try
+        {
+            await echo.ReceiveAsync(brief.Token);
+            throw new InvalidOperationException("UDP leaked from a TCP-only VPN route to DIRECT.");
+        }
+        catch (OperationCanceledException) when (!token.IsCancellationRequested)
+        {
+            Console.WriteLine("PASS UDP cannot reach a lower-priority DIRECT route");
+        }
+    }
+
+    var deadOnPort = new RouteRule(RouteMatch.Port, direct.Port.ToString(), RouteProtocol.Tcp, new(RouteKind.Server, deadServer));
+    var next = draft with { Rules = [.. draft.Rules, deadOnPort] };
+    bool saved = false;
+    await core.ApplyRoutingAsync(first, "Same name", sources, next, false, () => saved = true, token);
+    Require(saved && !core.Exited, "Configuration commit in the same running core");
+    Require(await Request("127.0.0.1") != "direct", "Unreachable VPN cannot reach a local origin via DIRECT");
+    await SendDatagram("allowed");
+    var received = await echo.ReceiveAsync(token);
+    Require(Encoding.ASCII.GetString(received.Buffer) == "allowed", "Explicit direct UDP after hot apply");
+
+    var blockSecondary = new RouteRule(RouteMatch.DomainSuffix, "secondary.test", RouteProtocol.Any, new(RouteKind.Reject));
+    var newDraft = draft with { Rules = [blockSecondary, .. draft.Rules] };
+    await core.ApplyRoutingAsync(first, "Same name", sources, newDraft, false, () => { }, token);
+    var response = await Request("a.secondary.test");
+    Require(response != "secondary", "Hot apply changes priority on the same listener");
+
+    int failures = 0;
+    try
+    {
+        await core.ApplyRoutingAsync(first, "Same name", sources, draft, false,
+            () => throw new IOException("Injected persistence failure"), token);
+    }
+    catch (IOException error) when (error.Message.Contains("Восстановлена"))
+    {
+        failures++;
+    }
+    Require(failures == 1 && await Request("a.secondary.test") != "secondary" && await Request("primary.test") == "primary",
+        "Failed persistence restores previous rules with the same listener");
+
+    var wrongContent = second with { Content = first.Content.Replace("Same name", "Different node") };
+    int missing = 0;
+    try
+    {
+        await core.ApplyRoutingAsync(first, "Same name", [first, wrongContent, unavailable], draft, false,
+            () => throw new Exception("An unverified config must never be persisted"), token);
+    }
+    catch (IOException error) when (error.Message.Contains("Восстановлена"))
+    {
+        missing++;
+    }
+    Require(missing == 1 && await Request("a.secondary.test") != "secondary" && await Request("primary.test") == "primary",
+        "Missing loaded server rolls back live configuration");
+
+    var paths = Directory.GetFiles(Directory.GetDirectories(scratch, "session-*").Single(), "route-nodes-*.txt");
+    Require(paths.Length == 3, "Stale session provider files pruned");
+    var geoRules = draft with
+    {
+        Rules =
+        [
+            new(RouteMatch.GeoSite, "test", RouteProtocol.Tcp, new(RouteKind.Server, secondServer)),
+            new(RouteMatch.GeoIp, "ru", RouteProtocol.Any, new(RouteKind.Main)),
+            .. draft.Rules
+        ]
+    };
+    await core.ApplyRoutingAsync(first, "Same name", sources, geoRules, false, () => { }, token);
+    Require(await Request("geo.test") == "secondary" && await Request("127.0.0.1") == "primary", "GEOIP and GEOSITE with fixture databases");
+
+    var invalidGeo = geoRules with { Rules = [new(RouteMatch.GeoSite, "not-in-fixture", RouteProtocol.Any, new(RouteKind.Reject))] };
+    bool invalidGeoRejected = false;
+    try
+    {
+        await core.ApplyRoutingAsync(first, "Same name", sources, invalidGeo, false,
+            () => throw new InvalidOperationException("Invalid GeoSite must not be persisted"), token);
+    }
+    catch (IOException) { invalidGeoRejected = true; }
+    Require(invalidGeoRejected && await Request("geo.test") == "secondary", "Invalid GEO rule leaves the existing rules active");
+
+    string yaml = $$"""
+        proxies:
+          - {name: Primary, type: http, server: 127.0.0.1, port: {{primary.Port}}}
+          - {name: Secondary, type: http, server: 127.0.0.1, port: {{secondary.Port}}}
+          - {name: 'Без VPN', type: direct}
+        proxy-groups:
+          - name: '🚫 Недоступные сайты'
+            type: select
+            proxies: [Primary, Fastest]
+            default-selected: Fastest
+          - {name: Fastest, type: url-test, proxies: [Secondary, Primary]}
+          - {name: PROXY, type: select, proxies: ['🚫 Недоступные сайты']}
+          - {name: Internal, type: select, hidden: true, proxies: [Secondary]}
+          - name: YouTube
+            type: select
+            proxies: ['🚫 Недоступные сайты', Primary, REJECT]
+          - name: Steam
+            type: select
+            proxies: [Primary, Secondary]
+          - name: 'Остальные сайты'
+            type: select
+            proxies: ['Без VPN', Primary]
+        rule-providers:
+          steam:
+            type: inline
+            behavior: classical
+            payload:
+              - DOMAIN,store.steam.test
+              - PROCESS-NAME,steam.exe
+        rules:
+          - DOMAIN-SUFFIX,youtube.test,YouTube
+          - AND,((NETWORK,tcp),(RULE-SET,steam)),Steam
+          - DOMAIN,proxy.test,PROXY
+          - DOMAIN,internal.test,Internal
+          - MATCH,Остальные сайты
+        """;
+    var fullSource = new Profile(Guid.NewGuid(), "Full subscription", null, yaml,
+        [new("Primary", "Http"), new("Secondary", "Http")], "Primary");
+    var parsed = SubscriptionRouting.Read(fullSource);
+    var encoded = fullSource with { Content = Convert.ToBase64String(Encoding.UTF8.GetBytes(yaml)) };
+    Require(parsed?.Groups.Count == 7 && parsed.Rules.Length == 5 && SubscriptionRouting.Read(encoded)?.Groups.Count == 7,
+        "Full YAML and Base64 subscriptions retain groups and conditions");
+    Require(parsed!.Groups.Keys.Where(parsed.IsVisibleGroup).SequenceEqual(["YouTube", "Steam", "Остальные сайты"]) &&
+        parsed.IsServiceGroup("PROXY") && parsed.IsServiceGroup("Fastest") && parsed.IsServiceGroup("Internal"),
+        "Only categories that expose manual selection appear in the interface");
+    Require(Subscription.CabinetMihomoAddress(new Uri("https://example.test/sub/id?key=value"))?.PathAndQuery ==
+        "/sub/id/mihomo?key=value" && Subscription.CabinetMihomoAddress(new Uri("https://example.test/sub/id/mihomo")) is null,
+        "Cabinet can request the full format without changing the subscription host");
+    const string providerTitle = "Мой VPN ⚡";
+    string encodedTitle = "base64:" + Convert.ToBase64String(Encoding.UTF8.GetBytes(providerTitle));
+    Require(Subscription.ReadTitle(encodedTitle) == providerTitle && Subscription.ReadTitle("  Demo VPN  ") == "Demo VPN" &&
+        Subscription.ReadTitle("base64:Invalid!") is null && Subscription.ReadTitle("base64:/w==") is null,
+        "Provider subscription title is decoded and malformed titles are ignored");
+    var jsonOptions = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
+    var cabinetPlans = JsonSerializer.Deserialize<CabinetApi.Plan[]>("""
+        [{"id":101,"tariff_id":1,"tariff_name":"Стандартный","is_active":true},
+         {"id":102,"tariff_id":2,"tariff_name":"Обход БС","is_active":true},
+         {"id":103,"tariff_id":3,"is_active":true},
+         {"id":104,"is_active":true}]
+        """, jsonOptions);
+    Require(cabinetPlans is not null && cabinetPlans.All(plan => plan.CanConnect) &&
+        cabinetPlans.Select(plan => plan.DisplayName).SequenceEqual(["Стандартный", "Обход БС", null, null]),
+        "Cabinet subscriptions use tariff names without displaying internal IDs");
+    var fakeInstallation = Guid.NewGuid();
+    string deviceId = SubscriptionDevice.MakeIdentifier(fakeInstallation, "sub.example.test");
+    Require(deviceId.Length == 64 && deviceId.All(char.IsAsciiHexDigit) &&
+        deviceId == SubscriptionDevice.MakeIdentifier(fakeInstallation, "SUB.EXAMPLE.TEST") &&
+        deviceId != SubscriptionDevice.MakeIdentifier(fakeInstallation, "other.example.test"),
+        "Device identifier is stable and scoped to the provider host");
+    using var refusal = new HttpResponseMessage(HttpStatusCode.OK);
+    refusal.Headers.Add("x-hwid-max-devices-reached", "true");
+    ExpectInvalid(() => SubscriptionDevice.CheckHeaders(refusal.Headers), "Device limit rejected even on HTTP 200");
+    refusal.Headers.Clear();
+    refusal.Headers.Add("x-hwid-not-supported", "true");
+    ExpectInvalid(() => SubscriptionDevice.CheckHeaders(refusal.Headers), "Unsupported client status is detected");
+    Require(!new Node("🚫 HWID Error", "Vless").IsServer && !new Node("App not supported", "Vless").IsServer &&
+        new Node("Германия 1", "Vless").IsServer, "Provider HWID placeholders never appear as servers");
+
+    var subscriptionProfile = RoutingProfile.Create("From subscription");
+    await core.ApplyRoutingAsync(fullSource, "Primary", [fullSource], subscriptionProfile, false, () => { }, token);
+    Require(await Request("video.youtube.test") == "secondary" && await Request("store.steam.test") == "primary" &&
+        await Request("proxy.test") == "secondary" && await Request("internal.test") == "secondary" &&
+        await Request("127.0.0.1") == "direct", "Nested selector default, classical RULE-SET and subscription MATCH");
+
+    string sourceKey = RouteServer.SourceKey(fullSource);
+    var changedGroup = subscriptionProfile with { SubscriptionChoices = [new(sourceKey, "YouTube", "Primary")] };
+    RoutingProfiles.Export(export, changedGroup);
+    Require(RoutingProfiles.Import(export).SubscriptionChoices?.Single() == changedGroup.SubscriptionChoices[0],
+        "Subscription selector choice survives export and import");
+    await core.ApplyRoutingAsync(fullSource, "Primary", [fullSource], changedGroup, false, () => { }, token);
+    Require(await Request("video.youtube.test") == "primary", "Subscription group selection applies live");
+    var vpnFallback = changedGroup with { PreferLocalFallback = true };
+    await core.ApplyRoutingAsync(fullSource, "Primary", [fullSource], vpnFallback, false, () => { }, token);
+    Require(await Request("127.0.0.1") == "primary", "Explicit main VPN overrides subscription MATCH");
+
+    var manual = changedGroup with
+    {
+        Rules = [new(RouteMatch.Domain, "video.youtube.test", RouteProtocol.Any, new(RouteKind.Reject))],
+        Default = new(RouteKind.Reject)
+    };
+    await core.ApplyRoutingAsync(fullSource, "Primary", [fullSource], manual, false, () => { }, token);
+    Require(await Request("video.youtube.test") != "primary" && await Request("127.0.0.1") != "direct" &&
+        await Request("store.steam.test") == "primary", "Manual rules and fallback take precedence over subscription");
+
+    var invalidFeed = fullSource with { Content = yaml.Replace("DOMAIN,store.steam.test", "INVALID,store.steam.test")
+        .Replace("PROCESS-NAME,steam.exe", "INVALID,steam.exe") };
+    bool invalidFeedRejected = false;
+    try
+    {
+        await core.ApplyRoutingAsync(invalidFeed, "Primary", [invalidFeed], subscriptionProfile, false,
+            () => throw new InvalidOperationException("Empty rules from the provider must not be persisted"), token);
+    }
+    catch (IOException) { invalidFeedRejected = true; }
+    Require(invalidFeedRejected && await Request("127.0.0.1") != "direct",
+        "Invalid or empty rule provider is rejected before replacing live rules");
+
+    var localOnly = manual with { UseSubscriptionRules = false };
+    await core.ApplyRoutingAsync(fullSource, "Primary", [fullSource], localOnly, false, () => { }, token);
+    Require(await Request("store.steam.test") != "primary", "Subscription routes can be disabled in a routing profile");
+
+    var customGroup = new RouteGroup(Guid.NewGuid(), "External VPN", [secondServer]);
+    var customTarget = new RouteTarget(RouteKind.Group, Group: customGroup.Id);
+    var categoryTarget = new RouteTarget(RouteKind.SubscriptionGroup, Category: new(sourceKey, "YouTube"));
+    var custom = subscriptionProfile with
+    {
+        Groups = [customGroup],
+        SubscriptionChoices = [new(sourceKey, "YouTube", null, customTarget)],
+        Rules = [new(RouteMatch.Domain, "personal.test", RouteProtocol.Any, categoryTarget)]
+    };
+    RoutingProfiles.Export(export, custom);
+    var customImported = RoutingProfiles.Import(export);
+    Require(customImported.Groups.Length == 0 &&
+        customImported.SubscriptionChoices?.Single().Target == new RouteTarget(RouteKind.Server, secondServer) &&
+        customImported.Rules.Single().Target == categoryTarget, "Legacy category group becomes its first server on import");
+    await core.ApplyRoutingAsync(fullSource, "Primary", [fullSource, second], customImported, false, () => { }, token);
+    Require(await Request("video.youtube.test") == "secondary" && await Request("personal.test") == "secondary",
+        "Both subscription and personal rules use the category's selected server across sources");
+
+    var withDirect = custom with
+    {
+        Default = new(RouteKind.Direct),
+        SubscriptionChoices = [new(sourceKey, "YouTube", null, new(RouteKind.Server, secondServer))],
+        UseSubscriptionRules = false
+    };
+    await core.ApplyRoutingAsync(fullSource, "Primary", [fullSource, second], withDirect, false, () => { }, token);
+    Require(await Request("personal.test") == "secondary", "Explicit personal category rule works with subscription rules disabled");
+    await core.ApplyRoutingAsync(first, "Same name", sources, withDirect, false, () => { }, token);
+    Require(await Request("personal.test") != "direct", "Missing category fails closed");
+    Console.WriteLine("Routing integration checks passed.");
+
+    async Task<string> Request(string host, bool explicitPort = false)
+    {
+        try
+        {
+            using var request = await OpenRequest(host, "/", explicitPort);
+            using var reader = new StreamReader(request.GetStream());
+            var all = await reader.ReadToEndAsync(token);
+            int body = all.IndexOf("\r\n\r\n", StringComparison.Ordinal);
+            return body >= 0 ? all[(body + 4)..] : all;
+        }
+        catch (IOException) when (!token.IsCancellationRequested) { return ""; }
+    }
+
+    async Task<TcpClient> OpenRequest(string host, string path, bool explicitPort = false)
+    {
+        var client = await TcpClientAsync(core.Port);
+        string target = explicitPort ? host : $"{host}:{direct.Port}";
+        await client.GetStream().WriteAsync(Encoding.ASCII.GetBytes(
+            $"GET http://{target}{path} HTTP/1.1\r\nHost: {target}\r\nConnection: close\r\n\r\n"), token);
+        return client;
+    }
+
+    async Task<TcpClient> TcpClientAsync(int port)
+    {
+        var client = new TcpClient();
+        await client.ConnectAsync(IPAddress.Loopback, port, token);
+        return client;
+    }
+
+    async Task SendDatagram(string value)
+    {
+        byte[] frame = [0, 0, 0, 1, 127, 0, 0, 1, (byte)(udpPort >> 8), (byte)udpPort, .. Encoding.ASCII.GetBytes(value)];
+        await udp.SendAsync(frame, new IPEndPoint(IPAddress.Loopback, relay), token);
+    }
+}
+finally
+{
+    foreach (string directory in Directory.EnumerateDirectories(scratch, "session-*"))
+        Mihomo.DeleteSession(directory);
+    File.Delete(Path.Combine(scratch, "routing.json"));
+    string geo = Path.Combine(scratch, "geodata");
+    if (Directory.Exists(geo))
+    {
+        File.Delete(Path.Combine(geo, "GeoIP.dat"));
+        File.Delete(Path.Combine(geo, "GeoSite.dat"));
+        Directory.Delete(geo);
+    }
+    Directory.Delete(scratch);
+}
+
+// The fixture protobuf messages fit in single-byte length-delimited fields.
+static byte[] Field(int number, byte[] data) => [(byte)(number * 8 + 2), checked((byte)data.Length), .. data];
+static byte[] TextField(int number, string data) => Field(number, Encoding.ASCII.GetBytes(data));
+
+static Profile Source(string name, int port)
+{
+    var yaml = JsonSerializer.Serialize(new
+    {
+        proxies = new[] { new { name, type = "http", server = "127.0.0.1", port } }
+    });
+    return new(Guid.NewGuid(), name, null, yaml, [new Node(name, "Http")], name);
+}
+
+static void Require(bool condition, string label)
+{
+    if (!condition)
+        throw new InvalidOperationException(label);
+    Console.WriteLine($"PASS {label}");
+}
+
+static void ExpectInvalid(Action action, string label)
+{
+    try { action(); }
+    catch (IOException)
+    {
+        Console.WriteLine($"PASS {label}");
+        return;
+    }
+    throw new InvalidOperationException(label);
+}
+
+sealed class HttpEndpoint : IAsyncDisposable
+{
+    private readonly TcpListener listener;
+    private readonly CancellationTokenSource stop = new();
+    private readonly Task accept;
+    private readonly string body;
+    public int Port { get; }
+    public TaskCompletionSource HoldStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public HttpEndpoint(IPAddress bind, string body)
+    {
+        this.body = body;
+        listener = new TcpListener(bind, 0);
+        listener.Start();
+        Port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        accept = ListenAsync();
+    }
+
+    private async Task ListenAsync()
+    {
+        try
+        {
+            while (true)
+                _ = RespondAsync(await listener.AcceptTcpClientAsync(stop.Token), stop.Token);
+        }
+        catch (OperationCanceledException) { }
+        catch (SocketException) when (stop.IsCancellationRequested) { }
+    }
+
+    private async Task RespondAsync(TcpClient client, CancellationToken ct)
+    {
+        using (client)
+        try
+        {
+            var stream = client.GetStream();
+            using var reader = new StreamReader(stream, leaveOpen: true);
+            string request = await ReadHeaders();
+            if (request.StartsWith("CONNECT ", StringComparison.Ordinal))
+            {
+                await stream.WriteAsync("HTTP/1.1 200 Connection Established\r\n\r\n"u8.ToArray(), ct);
+                request = await ReadHeaders();
+            }
+            if (request.Contains("/hold", StringComparison.Ordinal))
+            {
+                HoldStarted.TrySetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+            }
+            await stream.WriteAsync(Encoding.ASCII.GetBytes($"HTTP/1.1 200 OK\r\nContent-Length: {body.Length}\r\nConnection: close\r\n\r\n{body}"), ct);
+
+            async Task<string> ReadHeaders()
+            {
+                string first = await reader.ReadLineAsync(ct) ?? "";
+                while (await reader.ReadLineAsync(ct) is { Length: > 0 }) { }
+                return first;
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (IOException) { }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (stop.IsCancellationRequested)
+            return;
+        stop.Cancel();
+        listener.Stop();
+        await accept;
+        stop.Dispose();
+    }
+}
+
