@@ -17,7 +17,7 @@ internal sealed record GitHubRelease(UpdateVersion Version, Uri Download, byte[]
 
 internal static partial class GitHubUpdates
 {
-    private const string Repository = "Perelgan/VPNDesktop";
+    private const string Repository = "Perelgan/Linkway";
     public const string ReleasesUrl = $"https://github.com/{Repository}/releases";
     private const string AssetName = "VPNDesktop-win-x64.zip";
     private const long MaxArchive = 256L * 1024 * 1024;
