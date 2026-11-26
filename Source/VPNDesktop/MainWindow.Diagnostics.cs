@@ -43,7 +43,7 @@ public partial class MainWindow
 
     private void ResetSessionTraffic()
     {
-        sessionStarted = DateTimeOffset.Now;
+        sessionStarted = session?.Started ?? DateTimeOffset.Now;
         currentTraffic = default;
         observed.Clear();
         appTraffic.Clear();
@@ -133,7 +133,7 @@ public partial class MainWindow
     {
         if (!clientSettings.SaveHistory)
             return;
-        history.Add(new(sessionStarted, (int)Math.Min(int.MaxValue, connectedFor.Elapsed.TotalSeconds),
+        history.Add(new(sessionStarted, (int)Math.Min(int.MaxValue, SessionElapsed.TotalSeconds),
             TunMode.IsChecked == true ? "TUN" : "PROXY", currentTraffic.Download, currentTraffic.Upload));
         if (history.Count > 100)
             history.RemoveAt(0);
@@ -160,13 +160,13 @@ public partial class MainWindow
         DiagnosticResults.Text = "Выполняем проверку…";
         var core = session;
         bool tun = TunMode.IsChecked == true;
-        bool guard = killSwitch is not null;
+        bool guard = killSwitch;
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
         deadline.CancelAfter(TimeSpan.FromSeconds(16));
         var checks = await CollectNetworkChecksAsync(core, tun, guard, deadline.Token);
         lifetime.Token.ThrowIfCancellationRequested();
         diagnostics = new(DateTimeOffset.Now, tun ? "TUN" : "PROXY", guard, core is not null,
-            MihomoVersions.Active.Version.ToString(3), checks);
+            core?.CoreVersion ?? MihomoVersions.Active.Version.ToString(3), checks);
         DiagnosticResults.Text = string.Join(Environment.NewLine, checks);
         RecordEvent("Диагностика завершена");
     });
@@ -249,10 +249,10 @@ public partial class MainWindow
                 Version = GitHubUpdates.InstalledRelease.ToString(),
                 Windows = Environment.OSVersion.Version.ToString(),
                 Mode = diagnostics?.Mode ?? (TunMode.IsChecked == true ? "TUN" : "PROXY"),
-                KillSwitch = diagnostics?.KillSwitch ?? (killSwitch is not null),
+                KillSwitch = diagnostics?.KillSwitch ?? killSwitch,
                 Connected = diagnostics?.Connected ?? (session is not null),
                 CheckedAt = diagnostics?.CheckedAt,
-                Mihomo = diagnostics?.Mihomo ?? MihomoVersions.Active.Version.ToString(3),
+                Mihomo = diagnostics?.Mihomo ?? session?.CoreVersion ?? MihomoVersions.Active.Version.ToString(3),
                 Checks = diagnostics?.Checks ?? [],
                 Events = journal.ToArray()
             }, new JsonSerializerOptions { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });

@@ -15,8 +15,13 @@ internal sealed partial class Mihomo
         UseCookies = false, MaxAutomaticRedirections = 5
     }) { Timeout = TimeSpan.FromSeconds(20) };
 
-    public async Task ApplyRoutingAsync(Profile source, string node, Profile[] sources, RoutingProfile? profile,
-        bool bypassLan, Action save, CancellationToken cancellationToken, NetworkOptions? network = null)
+    public Task ApplyRoutingAsync(Profile source, string node, Profile[] sources, RoutingProfile? profile,
+        bool bypassLan, Action save, CancellationToken cancellationToken, NetworkOptions? network = null) =>
+        ApplyHostedRoutingAsync(source, node, sources, profile, bypassLan,
+            () => { save(); return Task.CompletedTask; }, cancellationToken, network);
+
+    internal async Task ApplyHostedRoutingAsync(Profile source, string node, Profile[] sources, RoutingProfile? profile,
+        bool bypassLan, Func<Task> save, CancellationToken cancellationToken, NetworkOptions? network)
     {
         var previous = currentConfig;
         var candidate = RoutingConfig.Build(Port, controller, secret, source, node, sources, profile, bypassLan, network);
@@ -36,7 +41,7 @@ internal sealed partial class Mihomo
             {
                 await ReloadAsync(candidate, cancellationToken);
                 cancellationToken.ThrowIfCancellationRequested();
-                save();
+                await save();
                 currentConfig = candidate;
                 CacheRemoteRules(directory, candidate);
             }

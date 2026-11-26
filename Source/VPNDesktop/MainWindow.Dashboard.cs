@@ -12,6 +12,7 @@ public partial class MainWindow
     private readonly Stopwatch connectedFor = new();
     private bool readingDashboard;
     private int? runtimeLatency;
+    private TimeSpan resumedElapsed;
     private (long Download, long Upload, double Seconds)? lastTraffic;
 
     private void ThemeChanged(object sender, RoutedEventArgs e)
@@ -126,7 +127,7 @@ public partial class MainWindow
     private void UpdateDashboardClock(ServerChoice? server)
     {
         DashboardSession.Text = connectedFor.IsRunning
-            ? $"Время сеанса {connectedFor.Elapsed:hh\\:mm\\:ss}" : "";
+            ? $"Время сеанса {SessionElapsed:hh\\:mm\\:ss}" : "";
         DashboardSession.Visibility = connectedFor.IsRunning ? Visibility.Visible : Visibility.Collapsed;
         DashboardPing.Visibility = clientSettings.DeveloperMode ? Visibility.Visible : Visibility.Collapsed;
         if (clientSettings.DeveloperMode)
@@ -139,12 +140,16 @@ public partial class MainWindow
     private void StartDashboardSession()
     {
         runtimeLatency = null;
+        resumedElapsed = session is { } core && core.Started < DateTimeOffset.Now
+            ? DateTimeOffset.Now - core.Started : TimeSpan.Zero;
         connectedFor.Restart();
         lastTraffic = null;
         DashboardChart.Clear();
         ResetSessionTraffic();
         AnimateConnectionButton();
     }
+
+    private TimeSpan SessionElapsed => resumedElapsed + connectedFor.Elapsed;
 
     private void EndDashboardSession()
     {
@@ -159,7 +164,7 @@ public partial class MainWindow
         UpdateDashboardDetails();
     }
 
-    private async Task SampleDashboardAsync(Mihomo core)
+    private async Task SampleDashboardAsync(VpnSessionClient core)
     {
         UpdateDashboardClock(activeServer);
         bool dashboardVisible = IsVisible && ConnectionPage.Visibility == Visibility.Visible;
@@ -187,7 +192,7 @@ public partial class MainWindow
             }
             lastTraffic = (download, upload, seconds);
         }
-        catch (Exception error) when (error is HttpRequestException or OperationCanceledException or System.Text.Json.JsonException or ObjectDisposedException or KeyNotFoundException)
+        catch (Exception error) when (IsHostCommunicationError(error) || error is HttpRequestException or ObjectDisposedException or KeyNotFoundException)
         {
             lastTraffic = null;
         }

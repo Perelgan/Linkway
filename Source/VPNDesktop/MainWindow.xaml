@@ -1178,7 +1178,10 @@
                                 <CheckBox x:Name="StartupToggle" Style="{StaticResource SettingToggle}" Content="Запускать с Windows" Margin="0,0,0,10"/>
                                 <CheckBox x:Name="AutoConnectToggle" Style="{StaticResource SettingToggle}" Content="Подключать VPN при запуске" Margin="0,0,0,10"/>
                                 <CheckBox x:Name="AutoRecoverToggle" Style="{StaticResource SettingToggle}" Content="Восстанавливать подключение после сна или сбоя" Margin="0,0,0,10"/>
-                                <CheckBox x:Name="TrayToggle" Style="{StaticResource SettingToggle}" Content="Сворачивать в трей при закрытии или минимизации" Margin="0,0,0,10"/>
+                                <CheckBox x:Name="TrayToggle" Style="{StaticResource SettingToggle}" Content="Убирать окно в трей при минимизации" Margin="0,0,0,10"/>
+                                <TextBlock Style="{StaticResource Label}" Text="При закрытии Linkway"/>
+                                <ComboBox x:Name="CloseActionBox" Style="{StaticResource RoutingSelect}" Margin="0,0,0,10"
+                                          AutomationProperties.Name="Действие при закрытии Linkway"/>
                                 <CheckBox x:Name="HistoryToggle" Style="{StaticResource SettingToggle}" Content="Хранить историю подключений" Margin="0,0,0,14"/>
                                 <Button Content="Сохранить" HorizontalAlignment="Left" Click="SaveDesktopSettings"/>
                             </StackPanel>

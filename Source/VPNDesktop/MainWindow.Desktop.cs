@@ -41,6 +41,8 @@ public partial class MainWindow
         AutoConnectToggle.IsChecked = clientSettings.AutoConnect;
         AutoRecoverToggle.IsChecked = clientSettings.AutoRecover;
         TrayToggle.IsChecked = clientSettings.MinimizeToTray;
+        CloseActionBox.ItemsSource = CloseActionLabels;
+        CloseActionBox.SelectedIndex = (int)SavedCloseAction;
         HistoryToggle.IsChecked = clientSettings.SaveHistory;
     }
 
@@ -51,7 +53,8 @@ public partial class MainWindow
             AutoConnect = AutoConnectToggle.IsChecked == true,
             AutoRecover = AutoRecoverToggle.IsChecked == true,
             MinimizeToTray = TrayToggle.IsChecked == true,
-            SaveHistory = HistoryToggle.IsChecked == true
+            SaveHistory = HistoryToggle.IsChecked == true,
+            CloseAction = (WindowCloseAction)Math.Max(0, CloseActionBox.SelectedIndex)
         };
         if (StartupToggle.IsEnabled)
         {
@@ -91,7 +94,7 @@ public partial class MainWindow
         trayMenu.Items.Add("Открыть Linkway", null, (_, _) => ShowFromTray());
         trayConnection = (Forms.ToolStripMenuItem)trayMenu.Items.Add("Подключить", null, (_, _) => ToggleConnection(this, new()));
         trayMenu.Items.Add("Диагностика", null, (_, _) => { ShowFromTray(); DiagnosticsNav.IsChecked = true; });
-        trayMenu.Items.Add("Выход", null, (_, _) => { exitRequested = true; Close(); });
+        trayMenu.Items.Add("Выход", null, (_, _) => { ShowFromTray(); exitRequested = true; Close(); });
         using var iconStream = Application.GetResourceStream(new Uri("/VPNDesktop;component/Assets/Linkway.ico",
             UriKind.Relative)).Stream;
         using var resourceIcon = new System.Drawing.Icon(iconStream);
@@ -144,7 +147,8 @@ public partial class MainWindow
     {
         if (tray is null || trayConnection is null)
             return;
-        tray.Text = session is not null ? "Linkway · Подключено" : killSwitch is not null ? "Linkway · Сеть заблокирована" : "Linkway · Отключено";
+        tray.Text = session is not null ? "Linkway · Подключено" : backgroundUnavailable ? "Linkway · Фоновый VPN"
+            : killSwitch ? "Linkway · Сеть заблокирована" : "Linkway · Отключено";
         trayConnection.Text = session is not null ? "Отключить" : "Подключить";
         trayConnection.Enabled = ConnectButton.IsEnabled;
     }
@@ -227,14 +231,14 @@ public partial class MainWindow
             return;
         }
 
-        if (session is not { Exited: false } core || DateTimeOffset.UtcNow < nextHealthCheck)
+        if (session is not { } core || DateTimeOffset.UtcNow < nextHealthCheck)
             return;
         var server = activeServer;
         nextHealthCheck = DateTimeOffset.UtcNow.AddSeconds(30);
         int? delay;
         checkingRecovery = true;
         try { delay = await core.CheckMainRouteAsync(lifetime.Token); }
-        catch (Exception error) when (error is HttpRequestException or OperationCanceledException or ObjectDisposedException or System.Text.Json.JsonException)
+        catch (Exception error) when (IsHostCommunicationError(error) || error is HttpRequestException or ObjectDisposedException)
         {
             delay = null;
         }

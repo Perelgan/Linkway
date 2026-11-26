@@ -216,12 +216,8 @@ public partial class MainWindow
         {
             try
             {
-                await core.ApplyRoutingAsync(primary.Source, primary.Node.Name, profiles.ToArray(), draft,
-                    BypassLan.IsChecked == true, () =>
-                    {
-                        killSwitch?.AllowTunAdapter();
-                        RoutingProfiles.Save(updated);
-                    }, lifetime.Token, clientSettings.Network);
+                await core.ApplyRoutingAsync(SessionConfiguration(primary, draft),
+                    () => RoutingProfiles.Save(updated), lifetime.Token);
             }
             catch (RoutingRecoveryException)
             {

@@ -45,6 +45,7 @@ internal static class UiSmoke
                     window.FindName("SidebarSpeed") is not TextBlock ||
                     window.FindName("DashboardPing") is not TextBlock { Visibility: Visibility.Collapsed } ||
                     window.FindName("DeveloperModeToggle") is not CheckBox ||
+                    window.FindName("CloseActionBox") is not ComboBox ||
                     window.FindName("CoreBuilds") is not ComboBox)
                     throw new InvalidOperationException("Connection and kernel settings controls do not match the default layout.");
                 var diagnostics = (RadioButton)window.FindName("DiagnosticsNav");

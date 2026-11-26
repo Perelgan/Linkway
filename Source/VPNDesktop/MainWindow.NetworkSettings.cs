@@ -17,7 +17,7 @@ public partial class MainWindow
 
     private async void SaveNetworkSettings(object sender, RoutedEventArgs e) => await RunAsync(() =>
     {
-        if (session is not null || killSwitch is not null)
+        if (session is not null || killSwitch || backgroundUnavailable)
             return Task.CompletedTask;
         var network = new NetworkOptions((ServerStrategy)ServerStrategyBox.SelectedIndex,
             FakeIpToggle.IsChecked == true, GeoRefreshToggle.IsChecked == true,

@@ -47,6 +47,18 @@ internal sealed partial class Mihomo : IAsyncDisposable
         StartAsync((port, controller, secret) => RoutingConfig.Build(port, controller, secret,
             source, node, sources, profile, bypassLan, network), cancellationToken, sessionRoot);
 
+    internal static Task<Mihomo> StartHostedAsync(Profile source, string node, Profile[] sources, RoutingProfile? profile,
+        bool bypassLan, NetworkOptions? network, string runtimeDirectory, CancellationToken cancellationToken) =>
+        StartAsync((port, controller, secret) => RoutingConfig.Build(port, controller, secret,
+            source, node, sources, profile, bypassLan, network), cancellationToken, runtimeDirectory,
+            executablePath: Path.Combine(runtimeDirectory, "mihomo.exe"));
+
+    internal async Task<string> ReadVersionAsync(CancellationToken token)
+    {
+        using var document = await GetAsync("version", token);
+        return document.RootElement.GetProperty("version").GetString()?.TrimStart('v') ?? "—";
+    }
+
     private static async Task<Mihomo> StartAsync(Func<int, int, string, RoutingConfig> makeConfig,
         CancellationToken cancellationToken, string? sessionRoot = null, string? preparedDirectory = null,
         string? executablePath = null)

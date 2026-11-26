@@ -9,9 +9,15 @@ namespace VPNDesktop;
 internal static class Bootstrap
 {
     [STAThread]
-    private static void Main()
+    private static void Main(string[] args)
     {
         AssemblyLoadContext.Default.Resolving += ResolveLanguageAssembly;
+        if (args is [HostProtocol.Argument])
+        {
+            if (HostRuntime.IsSnapshot(AppContext.BaseDirectory))
+                VpnSessionHost.Run();
+            return;
+        }
         RunApplication();
     }
 

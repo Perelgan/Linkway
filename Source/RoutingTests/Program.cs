@@ -20,8 +20,11 @@ Directory.CreateDirectory(scratch);
 try
 {
     var oldSettings = JsonSerializer.Deserialize<ClientSettings>("""{"Tun":true,"Repository":"another/project","KillSwitch":true}""");
-    Require(oldSettings is { Tun: true, KillSwitch: true, ExperimentalUpdates: false },
+    Require(oldSettings is { Tun: true, KillSwitch: true, ExperimentalUpdates: false, CloseAction: WindowCloseAction.Ask },
         "Existing settings migrate to the stable update channel");
+    var closeSettings = oldSettings! with { CloseAction = WindowCloseAction.KeepVpn };
+    Require(JsonSerializer.Deserialize<ClientSettings>(JsonSerializer.Serialize(closeSettings))?.CloseAction == WindowCloseAction.KeepVpn,
+        "The default action when closing Linkway survives saving and loading");
     var releases = JsonSerializer.SerializeToElement(new[]
     {
         Release("1.3.0-beta.2", prerelease: true), Release("1.2.0"), Release("1.1.0"),
@@ -95,6 +98,7 @@ try
 
     Profile first = Source("Same name", primary.Port);
     Profile second = Source("Same name", secondary.Port);
+    await HostedSessionChecks.RunAsync(scratch, first, second, token);
 
     var serverDisplay = new ServerChoice(first, first.Nodes[0]);
     serverDisplay.SetCheckState(ServerCheckState.Available, 47);

@@ -8,12 +8,13 @@ namespace VPNDesktop;
 
 public partial class MainWindow
 {
+    private static readonly UpdateVersion FirstBackgroundRelease = UpdateVersion.Parse("1.4.0-beta.17")!;
     private ClientSettings clientSettings = new();
     private bool settingsInitialized;
     private GitHubRelease[] cachedBuilds = [];
     private CancellationTokenSource? buildListRequest;
     private string? pendingUpdate;
-    private WindowsKillSwitch? killSwitch;
+    private bool killSwitch;
 
     private sealed record UpdateBuildChoice(GitHubRelease Release, bool Latest = false)
     {
@@ -82,11 +83,11 @@ public partial class MainWindow
 
     private void UpdateSettingsControls(bool idle, bool connected)
     {
-        NetworkSettings.IsEnabled = idle && !connected && killSwitch is null;
-        KillSwitchToggle.IsEnabled = idle && !connected && killSwitch is null && TunMode.IsChecked == true;
-        KillSwitchRelease.IsEnabled = idle && !connected && killSwitch is not null;
-        KillSwitchRelease.Visibility = !connected && killSwitch is not null ? Visibility.Visible : Visibility.Collapsed;
-        KillSwitchNote.Text = killSwitch is not null
+        NetworkSettings.IsEnabled = idle && !connected && !killSwitch && !backgroundUnavailable;
+        KillSwitchToggle.IsEnabled = idle && !connected && !killSwitch && !backgroundUnavailable && TunMode.IsChecked == true;
+        KillSwitchRelease.IsEnabled = idle && !connected && killSwitch;
+        KillSwitchRelease.Visibility = !connected && killSwitch ? Visibility.Visible : Visibility.Collapsed;
+        KillSwitchNote.Text = killSwitch
             ? connected ? "Активен. Windows блокирует соединения приложений вне адаптера TUN."
                 : "Доступ заблокирован. Подключитесь снова или снимите блокировку."
             : "Для режима TUN. При сбое ядра Windows удерживает блокировку до переподключения, снятия блокировки или выхода из клиента.";
@@ -94,31 +95,31 @@ public partial class MainWindow
         ExperimentalUpdates.IsEnabled = idle;
         UpdateBuilds.IsEnabled = idle && UpdateBuilds.HasItems;
         CheckUpdatesButton.IsEnabled = idle && buildListRequest is null;
-        InstallUpdateButton.IsEnabled = idle && !connected && buildListRequest is null && SelectedUpdate is { } release
-            && release.Version != GitHubUpdates.InstalledRelease;
+        InstallUpdateButton.IsEnabled = idle && !backgroundUnavailable && buildListRequest is null && SelectedUpdate is { } release
+            && CanInstallUpdate(release);
         UpdateCoreControls(idle, connected);
-        InstallUpdateButton.ToolTip = connected
-            ? "Отключите VPN перед установкой."
+        InstallUpdateButton.ToolTip = (connected || killSwitch) && SelectedUpdate is { } target && !SupportsBackgroundSession(target)
+            ? "Эта сборка не поддерживает фоновый VPN. Перед её установкой отключите VPN."
             : SelectedUpdate?.Manifest is not null
                 ? "Скачивает изменившиеся файлы. Linkway откроется после установки."
                 : "Скачивает архив сборки. Linkway откроется после установки.";
     }
 
-    private async void ReleaseKillSwitch(object sender, RoutedEventArgs e) => await RunAsync(() =>
+    private async void ReleaseKillSwitch(object sender, RoutedEventArgs e) => await RunAsync(async () =>
     {
-        if (session is null && killSwitch is not null)
+        if (session is null && killSwitch)
         {
-            DisarmKillSwitch();
+            await StopAsync();
             Message.Text = "Kill Switch снял блокировку сети.";
         }
-        return Task.CompletedTask;
     });
 
-    private void DisarmKillSwitch()
-    {
-        killSwitch?.Dispose();
-        killSwitch = null;
-    }
+    private static bool SupportsBackgroundSession(GitHubRelease release) =>
+        release.Version.CompareTo(FirstBackgroundRelease) >= 0;
+
+    private bool CanInstallUpdate(GitHubRelease release) =>
+        release.Version != GitHubUpdates.InstalledRelease &&
+        ((session is null && !killSwitch) || SupportsBackgroundSession(release));
 
     private async void SelectUpdateChannel(object sender, RoutedEventArgs e)
     {
@@ -231,8 +232,7 @@ public partial class MainWindow
         string? prepared = null;
         await RunAsync(async () =>
         {
-            if (buildListRequest is not null || SelectedUpdate is not { } release || release.Version == GitHubUpdates.InstalledRelease
-                || session is not null)
+            if (backgroundUnavailable || buildListRequest is not null || SelectedUpdate is not { } release || !CanInstallUpdate(release))
                 return;
             UpdateStatus.Text = $"Загружаем сборку {release.Version}…";
             var progress = new Progress<int>(percent =>

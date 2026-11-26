@@ -1,7 +1,6 @@
 using System.ComponentModel;
 using System.IO;
 using System.Net.Http;
-using System.Security.Principal;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
@@ -17,7 +16,7 @@ public partial class MainWindow : Window
     private readonly CancellationTokenSource lifetime = new();
     private readonly DispatcherTimer watchdog = new() { Interval = TimeSpan.FromSeconds(1) };
     private List<Profile> profiles = [];
-    private Mihomo? session;
+    private VpnSessionClient? session;
     private ServerChoice? activeServer;
     private CancellationTokenSource? serverCheckCancellation;
     private Task? serverCheckTask;
@@ -38,13 +37,6 @@ public partial class MainWindow : Window
         try
         {
             Directory.CreateDirectory(ProfileStore.DirectoryPath);
-            WindowsProxy.Restore();
-            foreach (string directory in Directory.EnumerateDirectories(ProfileStore.DirectoryPath, "session-*"))
-            {
-                if (Guid.TryParseExact(Path.GetFileName(directory).AsSpan("session-".Length), "N", out _)
-                    && (File.GetAttributes(directory) & FileAttributes.ReparsePoint) == 0)
-                    Mihomo.DeleteSession(directory);
-            }
         }
         catch (Exception)
         {
@@ -65,12 +57,7 @@ public partial class MainWindow : Window
         ShowProfiles(profiles.FirstOrDefault()?.Id);
         Loaded += RestoreCabinetOnLoad;
         Closing += CloseWindow;
-        Application.Current.SessionEnding += (_, _) =>
-        {
-            exitRequested = true;
-            try { WindowsProxy.Restore(); }
-            catch (Exception) { /* The next launch retries the recovery. */ }
-        };
+        Application.Current.SessionEnding += (_, _) => systemEnding = true;
         watchdog.Tick += CheckProcess;
         watchdog.Start();
         InitializeDesktopIntegration();
@@ -172,17 +159,13 @@ public partial class MainWindow : Window
         UpdateControls();
     }
 
-    private async Task SwitchServerAsync(Mihomo core, ServerChoice previous, ServerChoice target)
+    private async Task SwitchServerAsync(VpnSessionClient core, ServerChoice previous, ServerChoice target)
     {
         Message.Text = "Переключаем сервер…";
         try
         {
-            await core.ApplyRoutingAsync(target.Source, target.Node.Name, profiles.ToArray(), routing.Active,
-                BypassLan.IsChecked == true, () =>
-                {
-                    killSwitch?.AllowTunAdapter();
-                    RememberSelectedServer(target);
-                }, lifetime.Token, clientSettings.Network);
+            await core.ApplyRoutingAsync(SessionConfiguration(target, routing.Active),
+                () => RememberSelectedServer(target), lifetime.Token);
             activeServer = target;
             routingEmergency = false;
             ResetConnectionHealth();
@@ -206,7 +189,7 @@ public partial class MainWindow : Window
 
     private void ModeChanged(object sender, RoutedEventArgs e)
     {
-        if (IsInitialized)
+        if (IsInitialized && !changingList)
         {
             SaveRoutingSettings();
             UpdateControls();
@@ -235,11 +218,11 @@ public partial class MainWindow : Window
             : "Добавьте ссылку на подписку во вкладке «Источники».";
         RemoveButton.IsEnabled = editableProfiles && profile is { CabinetPlanId: null };
         ImportButton.IsEnabled = SourceBox.IsEnabled = NameBox.IsEnabled = editableProfiles;
-        ProxyMode.IsEnabled = TunMode.IsEnabled = editable && killSwitch is null;
+        ProxyMode.IsEnabled = TunMode.IsEnabled = editable && !killSwitch && !backgroundUnavailable;
         BypassLan.IsEnabled = editable;
         ConnectButton.Visibility = connected || hasServers ? Visibility.Visible : Visibility.Collapsed;
         ServerSelection.Visibility = hasServers ? Visibility.Visible : Visibility.Collapsed;
-        ConnectButton.IsEnabled = idle && (connected || SelectedServer is not null);
+        ConnectButton.IsEnabled = idle && !backgroundUnavailable && (connected || SelectedServer is not null);
         OpenImportButton.Visibility = hasServers ? Visibility.Collapsed : Visibility.Visible;
         OpenImportButton.IsEnabled = editableProfiles;
         BulkCheckButton.IsEnabled = serverCheckCancellation is { } ping
@@ -269,9 +252,9 @@ public partial class MainWindow : Window
             ConnectButton.ClearValue(ForegroundProperty);
         }
         PowerIcon.Data = (Geometry)FindResource(connected ? "LucideStop" : "LucidePower");
-        ConnectionLabel.Text = connected ? "Подключено" : killSwitch is null ? "Отключено" : "Сеть заблокирована";
+        ConnectionLabel.Text = connected ? "Подключено" : backgroundUnavailable ? "Фоновый VPN" : killSwitch ? "Сеть заблокирована" : "Отключено";
         ConnectionHeadline.Text = hasServers ? connectionAction : "Добавить сервер";
-        StatusDot.Fill = (Brush)FindResource(connected ? "Success" : killSwitch is null ? "Muted" : "StatusWarning");
+        StatusDot.Fill = (Brush)FindResource(connected ? "Success" : killSwitch || backgroundUnavailable ? "StatusWarning" : "Muted");
         SyncDashboardMode(useTun, ProxyMode.IsEnabled);
         UpdateDashboardDetails();
         ConnectionDetail.Content = connected ? activeServer?.Node.Name ?? "VPN подключён."
@@ -462,64 +445,33 @@ public partial class MainWindow : Window
 
     private async Task ConnectSelectedAsync()
     {
-        if (session is not null || SelectedServer is not { } server)
+        if (backgroundUnavailable || session is not null || SelectedServer is not { } server)
             return;
-        var profile = server.Source;
-        var selected = server.Node;
         if (!routingReadable)
             throw new IOException("Не удалось открыть сохранённый профиль маршрутизации. Подключение не запущено.");
 
         bool useTun = TunMode.IsChecked == true;
         if (useTun)
         {
-            using var identity = WindowsIdentity.GetCurrent();
-            if (!new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator))
+            if (!HostProtocol.Elevated)
                 throw new IOException("Закройте клиент и запустите VPNDesktop.exe от имени администратора для TUN.");
             if (!File.Exists(Path.Combine(AppContext.BaseDirectory, "wintun.dll")))
                 throw new IOException("В папке Libraries отсутствует wintun.dll.");
         }
 
-        WindowsProxy.Restore();
         Message.Text = "Запускаем подключение…";
-        var candidate = await Mihomo.StartAsync(profile, selected.Name, profiles.ToArray(), routing.Active,
-            BypassLan.IsChecked == true, lifetime.Token, network: clientSettings.Network);
         try
         {
-            if (useTun)
-            {
-                if (KillSwitchToggle.IsChecked == true)
-                    killSwitch ??= WindowsKillSwitch.Arm(candidate.ExecutablePath);
-                await candidate.EnableTunAsync(lifetime.Token);
-                killSwitch?.AllowTunAdapter();
-            }
-            else
-                WindowsProxy.Enable(candidate.Port);
-            lifetime.Token.ThrowIfCancellationRequested();
-            RememberSelectedServer(server);
-            session = candidate;
-            StartDashboardSession();
-            activeServer = server;
-            BeginRecovery();
+            var result = await VpnSessionClient.StartAsync(SessionConfiguration(server, routing.Active),
+                () => RememberSelectedServer(server), lifetime.Token);
+            AcceptBackgroundSession(result);
             RecordEvent("Подключение установлено");
-            UpdateActiveServerRow();
-            RefreshRoutingSourceView();
-            Message.Text = useTun ? "Адаптер TUN запущен." : $"Системный прокси работает на 127.0.0.1:{session.Port}.";
+            Message.Text = useTun ? "Адаптер TUN запущен." : $"Системный прокси работает на 127.0.0.1:{result.Connection!.Port}.";
         }
         catch
         {
-            try
-            {
-                if (session == candidate)
-                {
-                    session = null;
-                    activeServer = null;
-                    EndDashboardSession();
-                    UpdateActiveServerRow();
-                }
-                killSwitch?.BlockTunAdapter();
-                WindowsProxy.Restore();
-            }
-            finally { await candidate.DisposeAsync(); }
+            if (!closing && HostProtocol.Exists())
+                await TryAttachAfterFailureAsync();
             throw;
         }
     }
@@ -668,53 +620,28 @@ public partial class MainWindow : Window
 
     private async Task StopAsync(bool preserveKillSwitch = false)
     {
-        var previous = session;
-        if (previous is not null)
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(16));
+        if (HostProtocol.Exists() && !backgroundUnavailable)
+            killSwitch = (await VpnSessionClient.StopAsync(preserveKillSwitch, deadline.Token)).Guard;
+        else if (!backgroundUnavailable)
         {
-            RecordSessionEnd();
-            RecordEvent(preserveKillSwitch ? "Сеанс прерван" : "Сеанс завершён");
-        }
-        session = null;
-        EndDashboardSession();
-        activeServer = null;
-        UpdateActiveServerRow();
-        RefreshRoutingSourceView();
-        try
-        {
-            killSwitch?.BlockTunAdapter();
             WindowsProxy.Restore();
+            killSwitch = false;
         }
-        finally
-        {
-            try
-            {
-                if (previous is not null)
-                    await previous.DisposeAsync();
-            }
-            finally
-            {
-                if (!preserveKillSwitch)
-                    DisarmKillSwitch();
-            }
-        }
+        ClearBackgroundSession(preserveKillSwitch);
     }
 
     private async void CheckProcess(object? sender, EventArgs e)
     {
-        if (session is { Exited: false } core)
-            await SampleDashboardAsync(core);
-        if (session?.Exited == true)
+        if (pollingSession || closing || busy)
+            return;
+        pollingSession = true;
+        try
         {
-            await RunAsync(async () =>
-            {
-                ScheduleRecovery();
-                await StopAsync(preserveKillSwitch: true);
-                NotifyTray("Mihomo завершился.");
-                Message.Text = killSwitch is null ? "Mihomo завершился. Подключение закрыто."
-                    : "Mihomo завершился. Kill Switch удерживает блокировку сети.";
-            });
+            await PollBackgroundSessionAsync();
+            await CheckRecoveryAsync();
         }
-        await CheckRecoveryAsync();
+        finally { pollingSession = false; }
     }
 
     private async void CloseWindow(object? sender, CancelEventArgs e)
@@ -722,26 +649,44 @@ public partial class MainWindow : Window
         if (readyToClose)
             return;
         e.Cancel = true;
-        if (closing)
+        if (closing || closePromptOpen)
             return;
-        if (clientSettings.MinimizeToTray && tray is not null && !exitRequested && pendingUpdate is null)
+        WindowCloseAction? action = pendingUpdate is not null || systemEnding ? WindowCloseAction.KeepVpn : SavedCloseAction;
+        if (action == WindowCloseAction.Ask || (exitRequested && action == WindowCloseAction.Tray) ||
+            (backgroundUnavailable && action == WindowCloseAction.Disconnect))
+            action = ChooseCloseAction();
+        exitRequested = false;
+        if (action is null)
+            return;
+        if (action == WindowCloseAction.Tray)
         {
             Hide();
             return;
         }
         closing = true;
+        UpdateControls();
+        while (busy)
+            await Task.Delay(40);
+        if (action == WindowCloseAction.Disconnect)
+        {
+            try { await StopAsync(); }
+            catch (Exception)
+            {
+                closing = false;
+                UpdateControls();
+                Message.Text = "Не удалось отключить фоновый VPN. Повторите попытку.";
+                return;
+            }
+        }
         DisposeDesktopIntegration();
         watchdog.Stop();
         routingMonitor.Stop();
         lifetime.Cancel();
         UpdateControls();
-        while (busy)
-            await Task.Delay(40);
         try
         {
             if (serverCheckTask is { } pendingCheck)
                 await pendingCheck;
-            await StopAsync();
             InstallPendingUpdate();
         }
         catch (Exception)

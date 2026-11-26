@@ -25,17 +25,18 @@ public partial class MainWindow
         var active = MihomoVersions.Active;
         CoreBuilds.ItemsSource = choices;
         CoreBuilds.SelectedItem = active.Bundled ? choices[0] : choices.Skip(1).FirstOrDefault(choice => choice.Version == active.Version);
-        CoreVersionLabel.Text = $"Активное v{active.Version.ToString(3)}";
+        CoreVersionLabel.Text = session is { } core ? $"Работает v{core.CoreVersion}" : $"Выбрано v{active.Version.ToString(3)}";
     }
 
     private void UpdateCoreControls(bool idle, bool connected)
     {
         CoreBuilds.IsEnabled = FindCoreBuildsButton.IsEnabled = idle;
         var active = MihomoVersions.Active;
-        InstallCoreBuildButton.IsEnabled = idle && !connected && killSwitch is null && serverCheckCancellation is null &&
+        CoreVersionLabel.Text = session is { } core ? $"Работает v{core.CoreVersion}" : $"Выбрано v{active.Version.ToString(3)}";
+        InstallCoreBuildButton.IsEnabled = idle && !connected && !killSwitch && !backgroundUnavailable && serverCheckCancellation is null &&
             CoreBuilds.SelectedItem is CoreChoice choice &&
             (choice.Version != active.Version || choice.Release is null && !active.Bundled);
-        InstallCoreBuildButton.ToolTip = connected || killSwitch is not null
+        InstallCoreBuildButton.ToolTip = connected || killSwitch
             ? "Отключите VPN и снимите блокировку сети перед сменой ядра."
             : "Выбранная версия будет использована при следующем подключении.";
     }
@@ -65,7 +66,7 @@ public partial class MainWindow
 
     private async void InstallCoreBuild(object sender, RoutedEventArgs e) => await RunAsync(async () =>
     {
-        if (session is not null || killSwitch is not null || serverCheckCancellation is not null ||
+        if (session is not null || killSwitch || backgroundUnavailable || serverCheckCancellation is not null ||
             CoreBuilds.SelectedItem is not CoreChoice choice)
             return;
         CoreUpdateStatus.Text = choice.Release is null ? "Выбираем комплектное ядро…" : "Загружаем и проверяем ядро Mihomo…";
@@ -73,7 +74,7 @@ public partial class MainWindow
         {
             await Task.Run(() => MihomoVersions.SelectAsync(choice.Release, lifetime.Token), lifetime.Token);
             var active = MihomoVersions.Active;
-            CoreVersionLabel.Text = $"Активное v{active.Version.ToString(3)}";
+            CoreVersionLabel.Text = $"Выбрано v{active.Version.ToString(3)}";
             CoreUpdateStatus.Text = $"Ядро v{active.Version.ToString(3)} выбрано.";
         }
         catch (Exception error) when (error is IOException or HttpRequestException or UnauthorizedAccessException or

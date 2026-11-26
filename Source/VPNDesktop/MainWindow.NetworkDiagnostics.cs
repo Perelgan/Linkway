@@ -19,7 +19,7 @@ public partial class MainWindow
     private static readonly Uri SecondaryProbe = new("https://example.org/");
     private static readonly Uri Ipv6Probe = new("https://api6.ipify.org/");
 
-    private static async Task<string[]> CollectNetworkChecksAsync(Mihomo? core, bool tun, bool guard, CancellationToken token)
+    private static async Task<string[]> CollectNetworkChecksAsync(VpnSessionClient? core, bool tun, bool guard, CancellationToken token)
     {
         var checks = new List<string>();
         try { checks.AddRange(ReadWindowsNetwork(core, tun)); }
@@ -108,7 +108,7 @@ public partial class MainWindow
         static string Count(bool answer) => answer ? "есть ответ" : "записей нет";
     }
 
-    private static async Task<string> ObserveProbeRoutesAsync(Mihomo core, ConcurrentDictionary<int, byte> ports,
+    private static async Task<string> ObserveProbeRoutesAsync(VpnSessionClient core, ConcurrentDictionary<int, byte> ports,
         Task complete, CancellationToken token)
     {
         const string label = "Маршруты тестовых HTTPS-запросов";
@@ -131,7 +131,7 @@ public partial class MainWindow
                 await Task.Delay(200, deadline.Token);
             } while (!deadline.IsCancellationRequested);
         }
-        catch (Exception error) when (error is HttpRequestException or OperationCanceledException or JsonException or InvalidOperationException or KeyNotFoundException)
+        catch (Exception error) when (IsHostCommunicationError(error) || error is HttpRequestException or InvalidOperationException or KeyNotFoundException)
         {
             // Closed or rejected connections may disappear before the API snapshot.
         }
@@ -158,7 +158,7 @@ public partial class MainWindow
         catch (HttpRequestException error) { result = DescribeHttpFailure(error.HttpRequestError, error.StatusCode); }
         catch (OperationCanceledException) { result = "тайм-аут"; }
         catch (SocketException error) { result = $"сокет Windows ({error.SocketErrorCode})"; }
-        catch (Exception error) when (error is IOException or JsonException or InvalidOperationException or KeyNotFoundException)
+        catch (Exception error) when (IsHostCommunicationError(error) || error is InvalidOperationException or KeyNotFoundException)
         {
             result = "не удалось получить результат";
         }
@@ -176,7 +176,7 @@ public partial class MainWindow
             _ => "ошибка HTTPS"
         };
 
-    private static IEnumerable<string> ReadWindowsNetwork(Mihomo? core, bool tun)
+    private static IEnumerable<string> ReadWindowsNetwork(VpnSessionClient? core, bool tun)
     {
         if (core is not null && !tun)
             yield return WindowsProxy.UsesLinkway(core.Port) ? "Системный прокси Windows: указывает на Linkway."

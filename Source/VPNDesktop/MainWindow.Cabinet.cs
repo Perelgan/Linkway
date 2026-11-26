@@ -17,13 +17,14 @@ public partial class MainWindow
     private async void RestoreCabinetOnLoad(object sender, RoutedEventArgs e)
     {
         Loaded -= RestoreCabinetOnLoad;
+        await RunAsync(RestoreBackgroundSessionAsync);
         await RunCabinetAsync(async () =>
         {
             cabinetSession = CabinetSession.Load();
             if (cabinetSession is not null)
                 await SyncCabinetAsync();
         });
-        if (clientSettings.AutoConnect && SelectedServer is not null)
+        if (clientSettings.AutoConnect && session is null && SelectedServer is not null)
             await RunAsync(ConnectSelectedAsync);
     }
 
