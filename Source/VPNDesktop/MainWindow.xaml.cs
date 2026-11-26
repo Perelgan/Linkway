@@ -66,6 +66,7 @@ public partial class MainWindow : Window
     private void ShowProfiles(Guid? selected, bool preferSelected = false)
     {
         var previous = SelectedServer;
+        var activeRoute = activeServer is { } active ? RouteServer.From(active) : null;
         changingList = true;
         ProfilesList.ItemsSource = profiles;
         ProfilesList.SelectedItem = profiles.FirstOrDefault(profile => profile.Id == selected);
@@ -75,6 +76,7 @@ public partial class MainWindow : Window
         NodesList.SelectedItem = (!preferSelected ? servers.FirstOrDefault(server => previous is not null
                 && server.Source.Id == previous.Source.Id && server.Node.Name == previous.Node.Name)
             : null)
+            ?? (activeRoute is not null ? servers.FirstOrDefault(server => RouteServer.From(server) == activeRoute) : null)
             ?? servers.FirstOrDefault(server => server.Source.Id == selected && server.Node.Name == server.Source.Selected)
             ?? servers.FirstOrDefault(server => server.Source.Id == selected)
             ?? servers.FirstOrDefault();
@@ -87,11 +89,13 @@ public partial class MainWindow : Window
 
     private void UpdateActiveServerRow()
     {
+        var active = activeServer;
+        var route = active is not null ? RouteServer.From(active) : null;
         foreach (var server in NodesList.Items.OfType<ServerChoice>())
         {
             server.ShowLatency = clientSettings.DeveloperMode;
-            server.IsConnected = activeServer is { } active && server.Node == active.Node
-                && server.Source.Id == active.Source.Id && server.Source.Content == active.Source.Content;
+            server.IsConnected = route is not null && server.Node.Name == route.Name &&
+                RouteServer.SourceKey(server.Source) == route.Source && server.Source.Content == active?.Source.Content;
         }
     }
 

@@ -62,8 +62,7 @@ public partial class MainWindow
         changingList = true;
         try
         {
-            if (visible is not null)
-                NodesList.SelectedItem = visible;
+            NodesList.SelectedItem = visible;
             (connection.Tun ? TunMode : ProxyMode).IsChecked = true;
         }
         finally { changingList = false; }
