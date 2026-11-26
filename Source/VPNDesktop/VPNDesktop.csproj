@@ -7,7 +7,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
     <StartupObject>VPNDesktop.Bootstrap</StartupObject>
-    <Version>1.4.0-beta.8</Version>
+    <Version>1.4.0-beta.9</Version>
     <Product>Linkway</Product>
     <AssemblyTitle>Linkway</AssemblyTitle>
     <ApplicationIcon>Assets/Linkway.ico</ApplicationIcon>
