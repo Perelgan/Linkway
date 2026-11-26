@@ -700,13 +700,6 @@
                                     <TextBlock x:Name="DashboardSubscription" TextTrimming="CharacterEllipsis" FontWeight="SemiBold"/>
                                     <TextBlock x:Name="DashboardSession" Margin="0,4,0,3" Foreground="{DynamicResource Muted}"/>
                                     <TextBlock x:Name="DashboardPing" Visibility="Collapsed" Foreground="{DynamicResource Muted}"/>
-                                    <StackPanel x:Name="UnavailableSitesPicker" Visibility="Collapsed" Margin="0,8,0,0">
-                                        <TextBlock Text="Недоступные сайты" Foreground="{DynamicResource Muted}" Margin="0,0,0,4"/>
-                                        <ComboBox x:Name="UnavailableSitesServerBox" Style="{StaticResource RoutingSelect}"
-                                                  ItemTemplate="{StaticResource FlaggedChoice}" SelectionChanged="UnavailableSitesServerChanged"
-                                                  AutomationProperties.Name="Сервер для недоступных сайтов"
-                                                  ToolTip="Сервер для группы «Недоступные сайты» в правилах источника."/>
-                                    </StackPanel>
                                     <local:TrafficChart x:Name="DashboardChart" Height="54" Margin="0,6,0,0"
                                                         Foreground="{DynamicResource Accent}" Background="{DynamicResource Line}"
                                                         AutomationProperties.Name="График скорости за последнюю минуту"/>
@@ -760,6 +753,7 @@
                                                     <ColumnDefinition Width="*"/>
                                                     <ColumnDefinition Width="127"/>
                                                     <ColumnDefinition Width="Auto"/>
+                                                    <ColumnDefinition Width="Auto"/>
                                                 </Grid.ColumnDefinitions>
                                                 <Border Width="33" Height="33" CornerRadius="8" Background="{DynamicResource Hover}"
                                                         HorizontalAlignment="Left" VerticalAlignment="Center">
@@ -789,7 +783,29 @@
                                                         VerticalAlignment="Center" HorizontalAlignment="Right">
                                                     <TextBlock Text="{Binding StatusText}" FontSize="12"/>
                                                 </Border>
-                                                <Button Grid.Column="3" Style="{StaticResource RowAction}" Content="Проверить"
+                                                <Button Grid.Column="3" Margin="0,0,8,0" MinWidth="135" Click="AssignUnavailableSitesServer"
+                                                        VerticalAlignment="Center" IsEnabled="{Binding CanAssignUnavailableSites}"
+                                                        AutomationProperties.Name="{Binding Node.Name, StringFormat='Сервер для недоступных сайтов: {0}'}">
+                                                    <Button.Style>
+                                                        <Style TargetType="Button" BasedOn="{StaticResource RowAction}">
+                                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                                            <Setter Property="Content" Value="Недоступные сайты"/>
+                                                            <Setter Property="ToolTip" Value="Направить недоступные сайты через этот сервер."/>
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding SupportsUnavailableSites}" Value="True">
+                                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                                </DataTrigger>
+                                                                <DataTrigger Binding="{Binding IsUnavailableSitesServer}" Value="True">
+                                                                    <Setter Property="Content" Value="✓ Недоступные сайты"/>
+                                                                    <Setter Property="Foreground" Value="{DynamicResource Accent}"/>
+                                                                    <Setter Property="BorderBrush" Value="{DynamicResource Accent}"/>
+                                                                    <Setter Property="ToolTip" Value="Снять назначение и использовать основной сервер."/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Button.Style>
+                                                </Button>
+                                                <Button Grid.Column="4" Style="{StaticResource RowAction}" Content="Проверить"
                                                         Click="CheckServerRow" VerticalAlignment="Center"
                                                         AutomationProperties.Name="{Binding Node.Name, StringFormat='Проверить сервер {0}'}"/>
                                             </Grid>

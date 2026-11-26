@@ -92,7 +92,6 @@ public partial class MainWindow : Window
             ?? servers.FirstOrDefault(server => server.Source.Id == selected)
             ?? servers.FirstOrDefault();
         changingList = false;
-        RefreshUnavailableSitesServerChoices();
         UpdateActiveServerRow();
         ServerListSummary.Text = $"Серверов: {servers.Length}";
         RefreshRoutingSourceView();
@@ -236,7 +235,7 @@ public partial class MainWindow : Window
         ConnectionHeadline.Text = hasServers ? connectionAction : "Добавить сервер";
         StatusDot.Fill = (Brush)FindResource(connected ? "Success" : killSwitch is null ? "Muted" : "StatusWarning");
         SyncDashboardMode(useTun, ProxyMode.IsEnabled);
-        UpdateUnavailableSitesPicker(editable);
+        UpdateUnavailableSitesRows(editable);
         UpdateDashboardDetails();
         ConnectionDetail.Content = connected ? activeServer?.Node.Name ?? "VPN подключён."
             : hasServers ? SelectedServer?.Node.Name ?? "Выберите сервер."

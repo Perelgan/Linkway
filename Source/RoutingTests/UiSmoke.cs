@@ -18,6 +18,7 @@ internal static class UiSmoke
                 var layout = (FrameworkElement)window.Content;
                 var dark = ((SolidColorBrush)window.FindResource("Surface")).Color;
                 Render(layout);
+                VerifyUnavailableSitesRow(window);
                 VerifyRoutingDialogTheme(window);
                 window.ApplyTheme(light: true);
                 var light = ((SolidColorBrush)window.FindResource("Surface")).Color;
@@ -57,6 +58,29 @@ internal static class UiSmoke
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
         return completion.Task;
+    }
+
+    private static void VerifyUnavailableSitesRow(MainWindow window)
+    {
+        var list = (ListBox)window.FindName("NodesList");
+        var node = new Node("Тестовый сервер", "Vless");
+        var server = new ServerChoice(new Profile(Guid.NewGuid(), "Тест", null, "", [node], node.Name), node);
+        var row = (Grid)list.ItemTemplate.LoadContent();
+        row.DataContext = server;
+        Render(row);
+        var button = row.Children.OfType<Button>().Single(control => Equals(control.Content, "Недоступные сайты"));
+        if (window.FindName("UnavailableSitesServerBox") is not null || button.Visibility != Visibility.Collapsed)
+            throw new InvalidOperationException("Unavailable-site assignment appears outside a supported server row.");
+
+        server.SetUnavailableSitesRole(supported: true, canAssign: true, assigned: false);
+        Render(row);
+        if (button.Visibility != Visibility.Visible || !button.IsEnabled)
+            throw new InvalidOperationException($"Unavailable-site button state: {button.Visibility}, enabled={button.IsEnabled}.");
+
+        server.SetUnavailableSitesRole(supported: true, canAssign: false, assigned: true);
+        Render(row);
+        if (!Equals(button.Content, "✓ Недоступные сайты") || button.IsEnabled)
+            throw new InvalidOperationException("The assigned server is not marked while editing is disabled.");
     }
 
     private static void VerifySubscriptionRulesSwitch(MainWindow window)
