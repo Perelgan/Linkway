@@ -14,26 +14,42 @@ try
     var oldSettings = JsonSerializer.Deserialize<ClientSettings>("""{"Tun":true,"Repository":"another/project","KillSwitch":true}""");
     Require(oldSettings is { Tun: true, KillSwitch: true, ExperimentalUpdates: false },
         "Existing settings migrate to the stable update channel");
-    using (var releases = JsonDocument.Parse("""
-        [
-          {"tag_name":"v1.3.0-beta.2","prerelease":true,"draft":false,"assets":[{"name":"VPNDesktop-win-x64.zip","state":"uploaded"}]},
-          {"tag_name":"v1.2.0","prerelease":false,"draft":false,"assets":[{"name":"VPNDesktop-win-x64.zip","state":"uploaded"}]},
-          {"tag_name":"v1.3.0-beta.10","prerelease":true,"draft":false,"assets":[{"name":"VPNDesktop-win-x64.zip","state":"uploaded"}]},
-          {"tag_name":"v1.4.0","prerelease":false,"draft":true,"assets":[{"name":"VPNDesktop-win-x64.zip","state":"uploaded"}]},
-          {"tag_name":"v1.5.0","prerelease":false,"draft":false,"assets":[]},
-          {"tag_name":"v1.6.0-beta.1","prerelease":false,"draft":false,"assets":[{"name":"VPNDesktop-win-x64.zip","state":"uploaded"}]}
-        ]
-        """))
+    var releases = JsonSerializer.SerializeToElement(new[]
     {
-        var installed = UpdateVersion.Parse("1.1.0")!;
-        var stable = GitHubUpdates.SelectRelease(releases.RootElement, false, installed);
-        var experimental = GitHubUpdates.SelectRelease(releases.RootElement, true, installed);
-        Require(stable?.Tag == "v1.2.0", "Stable channel excludes drafts, prereleases and releases without a package");
-        Require(experimental?.Tag == "v1.3.0-beta.10", "Experimental channel sorts numeric prerelease identifiers");
-        Require(GitHubUpdates.SelectRelease(releases.RootElement, false, experimental!.Value.Version) is null,
-            "Switching to stable does not downgrade");
-        Require(GitHubUpdates.SelectRelease(releases.RootElement, false, UpdateVersion.Parse("1.2.0-rc.1")!)?.Tag == "v1.2.0",
-            "A stable release supersedes a prerelease of the same version");
+        Release("1.3.0-beta.2", prerelease: true), Release("1.2.0"), Release("1.1.0"),
+        Release("1.3.0-beta.10", prerelease: true), Release("1.4.0", draft: true),
+        Release("1.5.0", withDigest: false), Release("1.6.0-beta.1")
+    });
+    var stable = GitHubUpdates.ReadReleases(releases, false).ToArray();
+    Require(stable.Select(build => build.Version.ToString()).SequenceEqual(["1.2.0", "1.1.0"]),
+        "Stable channel includes older stable builds and excludes drafts, prereleases and archives without checksums");
+    var experimental = GitHubUpdates.ReadReleases(releases, true).OrderByDescending(build => build.Version).ToArray();
+    Require(experimental.Select(build => build.Version.ToString()).SequenceEqual(["1.3.0-beta.10", "1.3.0-beta.2", "1.2.0", "1.1.0"]),
+        "Experimental channel includes older builds and sorts numeric prerelease identifiers");
+    var earlier = stable.Single(build => build.Version == UpdateVersion.Parse("1.1.0"));
+    Require(earlier.Download.AbsolutePath.EndsWith("/v1.1.0/VPNDesktop-win-x64.zip", StringComparison.Ordinal),
+        "An older selection retains its exact archive URL");
+    Require(UpdateVersion.Parse("1.2.0")!.CompareTo(UpdateVersion.Parse("1.2.0-rc.1")) > 0,
+        "A stable release supersedes a prerelease of the same version");
+
+    static object Release(string version, bool prerelease = false, bool draft = false, bool withDigest = true)
+    {
+        var tag = $"v{version}";
+        return new
+        {
+            tag_name = tag,
+            prerelease,
+            draft,
+            assets = new[]
+            {
+                new
+                {
+                    name = "VPNDesktop-win-x64.zip", state = "uploaded", size = 1024,
+                    digest = withDigest ? "sha256:" + new string('0', 64) : null,
+                    browser_download_url = $"{GitHubUpdates.ReleasesUrl}/download/{tag}/VPNDesktop-win-x64.zip"
+                }
+            }
+        };
     }
 
     await using var primary = new HttpEndpoint(IPAddress.Loopback, "primary");

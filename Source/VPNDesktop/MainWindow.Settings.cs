@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using System.Windows;
+using System.Windows.Controls;
 
 namespace VPNDesktop;
 
@@ -8,7 +9,6 @@ public partial class MainWindow
 {
     private ClientSettings clientSettings = new();
     private bool settingsInitialized;
-    private GitHubRelease? availableUpdate;
     private string? pendingUpdate;
     private WindowsKillSwitch? killSwitch;
 
@@ -64,8 +64,9 @@ public partial class MainWindow
         StableUpdates.IsEnabled = idle;
         ExperimentalUpdates.IsEnabled = idle;
         CheckUpdateButton.IsEnabled = idle;
-        InstallUpdateButton.Visibility = availableUpdate is null ? Visibility.Collapsed : Visibility.Visible;
-        InstallUpdateButton.IsEnabled = idle && !connected;
+        UpdateBuilds.IsEnabled = idle && UpdateBuilds.HasItems;
+        InstallUpdateButton.IsEnabled = idle && !connected && UpdateBuilds.SelectedItem is GitHubRelease release
+            && release.Version != GitHubUpdates.InstalledRelease;
         InstallUpdateButton.ToolTip = connected
             ? "Отключите VPN перед установкой."
             : "Скачивает релиз и закрывает приложение для установки.";
@@ -94,7 +95,7 @@ public partial class MainWindow
         var updated = clientSettings with { ExperimentalUpdates = ReferenceEquals(sender, ExperimentalUpdates) };
         if (updated == clientSettings)
             return;
-        availableUpdate = null;
+        UpdateBuilds.ItemsSource = null;
         UpdateStatus.Text = "";
         try
         {
@@ -122,30 +123,58 @@ public partial class MainWindow
 
     private async void CheckForUpdates(object sender, RoutedEventArgs e) => await RunAsync(async () =>
     {
-        availableUpdate = null;
-        UpdateStatus.Text = "Проверяем релизы на GitHub…";
+        var selection = (UpdateBuilds.SelectedItem as GitHubRelease)?.Version;
+        UpdateStatus.Text = "Загружаем список сборок с GitHub…";
         try
         {
-            availableUpdate = await GitHubUpdates.CheckAsync(clientSettings.ExperimentalUpdates, lifetime.Token);
-            UpdateStatus.Text = availableUpdate is { } release
-                ? $"Доступна версия {release.Version}. После загрузки приложение закроется для установки."
-                : "Новой версии нет.";
+            var builds = await GitHubUpdates.ListAsync(clientSettings.ExperimentalUpdates, lifetime.Token);
+            UpdateBuilds.ItemsSource = builds;
+            UpdateBuilds.SelectedItem = builds.FirstOrDefault(build => build.Version == selection)
+                ?? builds.FirstOrDefault(build => build.Version.CompareTo(GitHubUpdates.InstalledRelease) > 0)
+                ?? builds.FirstOrDefault(build => build.Version == GitHubUpdates.InstalledRelease);
+            ShowBuildStatus();
         }
         catch
         {
-            UpdateStatus.Text = "Проверка обновлений не завершилась.";
+            UpdateStatus.Text = "Не удалось обновить список сборок.";
             throw;
         }
     });
+
+    private void UpdateBuildChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!settingsInitialized || busy)
+            return;
+        ShowBuildStatus();
+        UpdateControls();
+    }
+
+    private void ShowBuildStatus()
+    {
+        if (UpdateBuilds.SelectedItem is not GitHubRelease build)
+        {
+            UpdateStatus.Text = UpdateBuilds.HasItems ? "Выберите сборку для установки." : "В этом канале пока нет доступных сборок.";
+            return;
+        }
+
+        var installed = GitHubUpdates.InstalledRelease;
+        UpdateStatus.Text = build.Version.CompareTo(installed) switch
+        {
+            < 0 => $"Вы выбрали более раннюю сборку {build.Version}.",
+            0 => $"Сборка {installed} уже установлена.",
+            _ => $"Готово к установке сборки {build.Version}."
+        };
+    }
 
     private async void DownloadUpdate(object sender, RoutedEventArgs e)
     {
         string? prepared = null;
         await RunAsync(async () =>
         {
-            if (availableUpdate is not { } release || session is not null)
+            if (UpdateBuilds.SelectedItem is not GitHubRelease release || release.Version == GitHubUpdates.InstalledRelease
+                || session is not null)
                 return;
-            UpdateStatus.Text = "Загружаем обновление…";
+            UpdateStatus.Text = $"Загружаем сборку {release.Version}…";
             var progress = new Progress<int>(percent =>
             {
                 if (busy && !closing)

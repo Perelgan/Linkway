@@ -1166,13 +1166,17 @@
                                         <TextBlock Text="Экспериментальная версия" FontWeight="SemiBold" TextWrapping="Wrap"/>
                                     </RadioButton>
                                 </UniformGrid>
+                                <TextBlock Style="{StaticResource Label}" Text="Сборка" Margin="0,12,0,5"/>
+                                <ComboBox x:Name="UpdateBuilds" Style="{StaticResource RoutingSelect}" DisplayMemberPath="DisplayName"
+                                          SelectionChanged="UpdateBuildChanged" AutomationProperties.Name="Сборка для установки"
+                                          IsEnabled="False"/>
                                 <TextBlock x:Name="UpdateStatus" TextWrapping="Wrap" Foreground="{StaticResource Muted}"
                                            Margin="0,10,0,0" AutomationProperties.LiveSetting="Polite"/>
                                 <WrapPanel Margin="0,13,0,0">
-                                    <Button x:Name="CheckUpdateButton" Content="Проверить обновления" Click="CheckForUpdates"
+                                    <Button x:Name="CheckUpdateButton" Content="Загрузить список сборок" Click="CheckForUpdates"
                                             Margin="0,0,8,4"/>
-                                    <Button x:Name="InstallUpdateButton" Content="Скачать и установить" Click="DownloadUpdate"
-                                            Visibility="Collapsed" Margin="0,0,0,4" Style="{StaticResource PrimaryButton}"
+                                    <Button x:Name="InstallUpdateButton" Content="Установить сборку" Click="DownloadUpdate"
+                                            Margin="0,0,0,4" Style="{StaticResource PrimaryButton}"
                                             ToolTipService.ShowOnDisabled="True"/>
                                     <TextBlock VerticalAlignment="Center" Margin="8,0,0,4">
                                         <Hyperlink Click="OpenUpdateReleases" Foreground="{StaticResource Accent}">Релизы на GitHub</Hyperlink>

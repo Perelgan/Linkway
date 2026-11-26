@@ -10,7 +10,10 @@ using System.Text.RegularExpressions;
 
 namespace VPNDesktop;
 
-internal sealed record GitHubRelease(UpdateVersion Version, Uri Download, byte[] Digest, long Size);
+internal sealed record GitHubRelease(UpdateVersion Version, Uri Download, byte[] Digest, long Size)
+{
+    public string DisplayName => Version == GitHubUpdates.InstalledRelease ? $"{Version} (установлена)" : Version.ToString();
+}
 
 internal static partial class GitHubUpdates
 {
@@ -28,11 +31,11 @@ internal static partial class GitHubUpdates
         ParseProductVersion(typeof(App).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion)
         ?? new(InstalledVersion, null);
 
-    public static async Task<GitHubRelease?> CheckAsync(bool experimental, CancellationToken cancellationToken)
+    public static async Task<GitHubRelease[]> ListAsync(bool experimental, CancellationToken cancellationToken)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(20));
-        (UpdateVersion Version, string Tag, JsonElement Asset)? latest = null;
+        var releases = new List<GitHubRelease>();
         for (int page = 1; ; page++)
         {
             using var request = MakeRequest(new Uri($"https://api.github.com/repos/{Repository}/releases?per_page=100&page={page}"));
@@ -46,32 +49,16 @@ internal static partial class GitHubUpdates
 
             await using var stream = await response.Content.ReadAsStreamAsync(deadline.Token);
             using var json = await JsonDocument.ParseAsync(stream, cancellationToken: deadline.Token);
-            var candidate = SelectRelease(json.RootElement, experimental, latest?.Version ?? InstalledRelease);
-            if (candidate is { } newer)
-                latest = (newer.Version, newer.Tag, newer.Asset.Clone());
+            releases.AddRange(ReadReleases(json.RootElement, experimental));
             if (!response.Headers.TryGetValues("Link", out var links) || !links.Any(link => link.Contains("rel=\"next\"", StringComparison.Ordinal)))
                 break;
         }
 
-        if (latest is not { } selected)
-            return null;
-        var (version, tag, asset) = selected;
-        string? digest = asset.TryGetProperty("digest", out var value) ? value.GetString() : null;
-        if (digest is null || !DigestPattern().IsMatch(digest))
-            throw new IOException("В карточке файла GitHub отсутствует SHA-256.");
-        if (!asset.TryGetProperty("size", out var length) || !length.TryGetInt64(out long size) || size <= 0 || size > MaxArchive)
-            throw new IOException("Размер файла обновления выходит за допустимый предел.");
-
-        var url = new Uri($"{ReleasesUrl}/download/{tag}/{AssetName}");
-        if (!string.Equals(asset.GetProperty("browser_download_url").GetString(), url.AbsoluteUri, StringComparison.Ordinal))
-            throw new IOException("GitHub вернул неожиданный адрес файла обновления.");
-        return new GitHubRelease(version, url, Convert.FromHexString(digest[7..]), size);
+        return releases.OrderByDescending(release => release.Version).DistinctBy(release => release.Version).ToArray();
     }
 
-    internal static (UpdateVersion Version, string Tag, JsonElement Asset)? SelectRelease(
-        JsonElement releases, bool experimental, UpdateVersion installed)
+    internal static IEnumerable<GitHubRelease> ReadReleases(JsonElement releases, bool experimental)
     {
-        (UpdateVersion Version, string Tag, JsonElement Asset)? latest = null;
         foreach (var release in releases.EnumerateArray())
         {
             if (release.GetProperty("draft").GetBoolean())
@@ -79,14 +66,21 @@ internal static partial class GitHubUpdates
             bool prerelease = release.GetProperty("prerelease").GetBoolean();
             string tag = release.GetProperty("tag_name").GetString() ?? "";
             if (UpdateVersion.Parse(tag) is not { } version || prerelease != (version.Prerelease is not null)
-                || (!experimental && prerelease) || version.CompareTo(latest?.Version ?? installed) <= 0)
+                || (!experimental && prerelease))
                 continue;
             var asset = release.GetProperty("assets").EnumerateArray().FirstOrDefault(item =>
                 item.GetProperty("name").GetString() == AssetName && item.GetProperty("state").GetString() == "uploaded");
-            if (asset.ValueKind != JsonValueKind.Undefined)
-                latest = (version, tag, asset);
+            if (asset.ValueKind == JsonValueKind.Undefined)
+                continue;
+            string? digest = asset.TryGetProperty("digest", out var value) ? value.GetString() : null;
+            if (digest is null || !DigestPattern().IsMatch(digest)
+                || !asset.TryGetProperty("size", out var length) || !length.TryGetInt64(out long size) || size <= 0 || size > MaxArchive)
+                continue;
+
+            var url = new Uri($"{ReleasesUrl}/download/{tag}/{AssetName}");
+            if (string.Equals(asset.GetProperty("browser_download_url").GetString(), url.AbsoluteUri, StringComparison.Ordinal))
+                yield return new GitHubRelease(version, url, Convert.FromHexString(digest[7..]), size);
         }
-        return latest;
     }
 
     public static async Task<string> PrepareAsync(GitHubRelease release, IProgress<int> progress, CancellationToken cancellationToken)
