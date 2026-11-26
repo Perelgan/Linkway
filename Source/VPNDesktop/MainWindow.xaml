@@ -1228,9 +1228,8 @@
                                     <Button x:Name="InstallUpdateButton" Content="Установить сборку" Click="DownloadUpdate"
                                             Margin="0,0,0,4" Style="{StaticResource PrimaryButton}"
                                             ToolTipService.ShowOnDisabled="True"/>
-                                    <TextBlock VerticalAlignment="Center" Margin="8,0,0,4">
-                                        <Hyperlink Click="OpenUpdateReleases" Foreground="{DynamicResource Accent}">Релизы на GitHub</Hyperlink>
-                                    </TextBlock>
+                                    <Button x:Name="CheckUpdatesButton" Content="Проверить обновления" Click="CheckUpdates"
+                                            Margin="8,0,0,4"/>
                                 </WrapPanel>
                             </StackPanel>
                         </Border>

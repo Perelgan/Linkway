@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
 using System.Text.Json;
@@ -49,7 +48,7 @@ public partial class MainWindow
         cachedBuilds = GitHubUpdates.LoadCache();
         ShowCachedBuilds();
         if (!UpdateBuilds.HasItems)
-            UpdateStatus.Text = "Выберите канал, чтобы загрузить сборки.";
+            UpdateStatus.Text = "Нажмите «Проверить обновления», чтобы загрузить сборки.";
         LoadNetworkSettings();
         LoadDesktopSettings();
         LightThemeToggle.IsChecked = clientSettings.LightTheme;
@@ -92,6 +91,7 @@ public partial class MainWindow
         StableUpdates.IsEnabled = idle;
         ExperimentalUpdates.IsEnabled = idle;
         UpdateBuilds.IsEnabled = idle && UpdateBuilds.HasItems;
+        CheckUpdatesButton.IsEnabled = idle && buildListRequest is null;
         InstallUpdateButton.IsEnabled = idle && !connected && buildListRequest is null && SelectedUpdate is { } release
             && release.Version != GitHubUpdates.InstalledRelease;
         InstallUpdateButton.ToolTip = connected
@@ -134,6 +134,19 @@ public partial class MainWindow
             clientSettings = updated;
         }
 
+        await RefreshUpdateBuildsAsync(previous);
+    }
+
+    private async void CheckUpdates(object sender, RoutedEventArgs e)
+    {
+        if (!settingsInitialized || busy || closing || buildListRequest is not null)
+            return;
+
+        await RefreshUpdateBuildsAsync(UpdateBuilds.SelectedItem as UpdateBuildChoice);
+    }
+
+    private async Task RefreshUpdateBuildsAsync(UpdateBuildChoice? previous)
+    {
         using var request = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
         buildListRequest?.Cancel();
         buildListRequest = request;
@@ -154,7 +167,7 @@ public partial class MainWindow
         {
             UpdateStatus.Text = UpdateBuilds.HasItems
                 ? "GitHub недоступен. Показан сохранённый список."
-                : "Не удалось загрузить сборки с GitHub. Выберите канал, чтобы повторить.";
+                : "Не удалось загрузить сборки с GitHub. Нажмите «Проверить обновления», чтобы повторить.";
         }
         finally
         {
@@ -164,18 +177,6 @@ public partial class MainWindow
                 if (!closing)
                     UpdateControls();
             }
-        }
-    }
-
-    private void OpenUpdateReleases(object sender, RoutedEventArgs e)
-    {
-        try
-        {
-            Process.Start(new ProcessStartInfo(GitHubUpdates.ReleasesUrl) { UseShellExecute = true })?.Dispose();
-        }
-        catch (System.ComponentModel.Win32Exception)
-        {
-            Message.Text = "Не удалось открыть GitHub в браузере.";
         }
     }
 

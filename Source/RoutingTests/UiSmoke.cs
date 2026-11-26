@@ -32,6 +32,8 @@ internal static class UiSmoke
                         throw new InvalidOperationException($"Navigation did not show {page}.");
                     Render(layout);
                 }
+                if (window.FindName("CheckUpdatesButton") is not Button { Content: "Проверить обновления" })
+                    throw new InvalidOperationException("The update check button is missing.");
                 Console.WriteLine("PASS WPF dark and light themes render, and all six navigation pages open");
                 window.Close();
                 completion.SetResult();
