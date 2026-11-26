@@ -623,7 +623,8 @@
                     <RadioButton x:Name="DiagnosticsNav" GroupName="Navigation" Style="{StaticResource NavButton}"
                                  Checked="NavigationChanged" AutomationProperties.Name="Диагностика">
                         <StackPanel Orientation="Horizontal">
-                            <Path Style="{StaticResource IconPath}" Data="{StaticResource LucideActivity}" Margin="0,0,10,0"/>
+                            <Path Style="{StaticResource IconPath}" Data="{StaticResource LucideActivity}" Margin="0,0,11,0"
+                                  Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=RadioButton}}"/>
                             <TextBlock Text="Диагностика" FontWeight="SemiBold"/>
                         </StackPanel>
                     </RadioButton>

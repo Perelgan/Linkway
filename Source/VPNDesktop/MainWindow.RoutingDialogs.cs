@@ -225,6 +225,11 @@ public partial class MainWindow
     private Editor NewEditor(Window owner, string title)
     {
         var body = new StackPanel { Margin = new Thickness(23, 18, 23, 22) };
+        return new(CreateRoutingDialog(owner, title, body), body);
+    }
+
+    internal Window CreateRoutingDialog(Window? owner, string title, StackPanel body)
+    {
         var window = new Window
         {
             Title = title, Owner = owner, Width = 565, MaxHeight = Math.Min(760, SystemParameters.WorkArea.Height),
@@ -233,7 +238,9 @@ public partial class MainWindow
             Foreground = BrushFor("Ink"), FontFamily = FontFamily, FontSize = FontSize, UseLayoutRounding = true,
             Content = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Content = body }
         };
-        return new(window, body);
+        // Modal windows have their own resource lookup tree.
+        window.Resources.MergedDictionaries.Add(Resources);
+        return window;
     }
 
     private TextBox TextField(Editor editor, string label, string value)
