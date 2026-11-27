@@ -17,7 +17,9 @@ internal sealed record HostedSource(Profile Profile, long? CabinetPlan)
 internal sealed record HostedConfiguration(HostedSource Source, string Node, HostedSource[] Sources,
     RoutingProfile? Routing, NetworkOptions? Network, bool BypassLan, bool Tun, bool Guard);
 
-internal sealed record HostedConnection(HostedSource Source, string Node, bool Tun, int Port, DateTimeOffset Started, string CoreVersion);
+internal sealed record HostedConnection(HostedSource Source, string Node, bool Tun, int Port, DateTimeOffset Started,
+    string CoreVersion, bool AutomaticStatusSupported = false);
+internal sealed record AutomaticRouteStatus(string? Server, int? Delay, int Available, int Total, string[] Failed);
 internal sealed record HostedStatus(bool Connected, bool Guard);
 internal sealed record HostedAttachment(HostedStatus Status, HostedConnection? Connection);
 internal sealed record HostRequest(string Command, HostedConfiguration? Configuration = null, bool Flag = false,

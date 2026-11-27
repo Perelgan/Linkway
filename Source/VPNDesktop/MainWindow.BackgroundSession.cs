@@ -20,10 +20,12 @@ public partial class MainWindow
         {
             await core.ApplyRoutingAsync(configuration, save, lifetime.Token);
             routingEmergency = false;
+            ResetAutomaticRouteStatus();
         }
         catch (RoutingRecoveryException)
         {
             routingEmergency = true;
+            ResetAutomaticRouteStatus();
             throw;
         }
     }
@@ -84,6 +86,7 @@ public partial class MainWindow
         finally { changingList = false; }
 
         session = new VpnSessionClient(connection);
+        ResetAutomaticRouteStatus();
         StartDashboardSession();
         BeginRecovery();
         UpdateActiveServerRow();
@@ -99,6 +102,7 @@ public partial class MainWindow
         }
         session = null;
         activeServer = null;
+        ResetAutomaticRouteStatus();
         EndDashboardSession();
         UpdateActiveServerRow();
         RefreshRoutingSourceView();
@@ -130,7 +134,9 @@ public partial class MainWindow
         killSwitch = status.Guard;
         if (status.Connected)
         {
-            await SampleDashboardAsync(core);
+            await PollAutomaticRouteAsync(core);
+            if (!closing && !busy && session == core)
+                await SampleDashboardAsync(core);
             return;
         }
 

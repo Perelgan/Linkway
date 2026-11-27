@@ -158,7 +158,8 @@ internal sealed class VpnSessionHost(string pipeName, string runtimeDirectory, A
                     }
                     await ConfirmAsync(pipe, token);
                     core = candidate;
-                    connection = new(config.Source, config.Node, config.Tun, candidate.Port, DateTimeOffset.Now, version);
+                    connection = new(config.Source, config.Node, config.Tun, candidate.Port, DateTimeOffset.Now, version,
+                        AutomaticStatusSupported: true);
                     return new HostedAttachment(Status(), connection);
                 }
                 catch
@@ -199,6 +200,7 @@ internal sealed class VpnSessionHost(string pipeName, string runtimeDirectory, A
         "traffic" => await RequireCore().GetTrafficSnapshotAsync(token),
         "connections" => await RequireCore().GetConnectionsAsync(token),
         "health" => await RequireCore().CheckMainRouteAsync(token),
+        "automatic-route" => await RequireCore().ReadAutomaticRouteAsync(token),
         "configuration" => await RequireCore().DescribeDiagnosticConfigurationAsync(token),
         "dns" => await RequireCore().TestDnsAsync(request.Flag, token),
         "probe-route" => await RequireCore().ProbeRouteAsync(request.Destination, token),

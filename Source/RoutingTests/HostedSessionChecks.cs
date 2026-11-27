@@ -38,6 +38,9 @@ internal static class HostedSessionChecks
                 started = await CommitAsync<HostedAttachment>(ui, confirm: true);
 
             var connection = started.Connection ?? throw new InvalidOperationException("Background connection is missing.");
+            if (!connection.AutomaticStatusSupported ||
+                await SendAsync<AutomaticRouteStatus?>(new("automatic-route")) is not null)
+                throw new InvalidOperationException("The host did not expose automatic status only for automatic routing.");
             using var handler = new HttpClientHandler { Proxy = new WebProxy("127.0.0.1", connection.Port) };
             using var browser = new HttpClient(handler);
             if (systemProxy != connection.Port || await browser.GetStringAsync("http://background.test/", token) != "primary")

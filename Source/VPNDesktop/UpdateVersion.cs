@@ -4,6 +4,9 @@ namespace VPNDesktop;
 
 internal sealed partial record UpdateVersion(Version Number, string? Prerelease) : IComparable<UpdateVersion>
 {
+    public string DisplayName => Prerelease?.StartsWith("beta.", StringComparison.Ordinal) == true
+        ? $"{Number.ToString(2)}-{Prerelease}" : ToString();
+
     public static UpdateVersion? Parse(string value)
     {
         var match = VersionPattern().Match(value);

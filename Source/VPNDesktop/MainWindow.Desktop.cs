@@ -283,6 +283,9 @@ public partial class MainWindow
 
         if (session is not { } core || DateTimeOffset.UtcNow < nextHealthCheck)
             return;
+        // Mihomo keeps checking the entire automatic group, including when every server is down.
+        if (AutomaticServerEnabled && core.AutomaticStatusSupported)
+            return;
         var server = activeServer;
         nextHealthCheck = DateTimeOffset.UtcNow.AddSeconds(30);
         int? delay;

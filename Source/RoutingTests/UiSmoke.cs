@@ -52,6 +52,8 @@ internal static class UiSmoke
                     window.FindName("ConnectionButtonScale") is not ScaleTransform ||
                     window.FindName("SidebarSpeed") is not TextBlock ||
                     window.FindName("DashboardPing") is not TextBlock { Visibility: Visibility.Collapsed } ||
+                    window.FindName("AutomaticServerToggle") is not CheckBox { Content: "Автовыбор по задержке" } ||
+                    window.FindName("AutomaticServerStatus") is not TextBlock { Visibility: Visibility.Collapsed } ||
                     window.FindName("DeveloperModeToggle") is not CheckBox ||
                     window.FindName("CloseActionBox") is not ComboBox ||
                     window.FindName("AdvancedNetworkSettings") is not Expander { IsExpanded: false, Header: "Для продвинутых" } ||

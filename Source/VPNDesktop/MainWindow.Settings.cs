@@ -16,14 +16,14 @@ public partial class MainWindow
     private string? pendingUpdate;
     private bool killSwitch;
 
-    private sealed record UpdateBuildChoice(GitHubRelease Release, bool Latest = false)
+    private sealed record UpdateBuildChoice(GitHubRelease Release, string Label, bool Latest = false)
     {
         public string DisplayName
         {
             get
             {
                 string version = Release.Version == GitHubUpdates.InstalledRelease
-                    ? $"{Release.Version} (установлена)" : Release.Version.ToString();
+                    ? $"{Label} (установлена)" : Label;
                 return Latest ? $"Последняя версия · {version}" : version;
             }
         }
@@ -45,7 +45,7 @@ public partial class MainWindow
         BypassLan.IsChecked = clientSettings.DirectLan;
         KillSwitchToggle.IsChecked = clientSettings.KillSwitch;
         (clientSettings.ExperimentalUpdates ? ExperimentalUpdates : StableUpdates).IsChecked = true;
-        AppVersionLabel.Text = $"Версия {GitHubUpdates.InstalledRelease}";
+        AppVersionLabel.Text = $"Версия {GitHubUpdates.InstalledRelease.DisplayName}";
         cachedBuilds = GitHubUpdates.LoadCache();
         ShowCachedBuilds();
         if (!UpdateBuilds.HasItems)
@@ -119,7 +119,7 @@ public partial class MainWindow
     private string? UpdateBlockReason(GitHubRelease release)
     {
         if (release.Version == GitHubUpdates.InstalledRelease)
-            return $"Сборка {release.Version} уже установлена. Нажмите «Проверить обновления», чтобы обновить список.";
+            return $"Сборка {release.Version.DisplayName} уже установлена. Нажмите «Проверить обновления», чтобы обновить список.";
         if ((session is not null || killSwitch || backgroundUnavailable) && !SupportsBackgroundSession(release))
             return clientSettings.ExperimentalUpdates
                 ? "Для установки при активном VPN выберите beta.17 или новее."
@@ -196,11 +196,18 @@ public partial class MainWindow
 
     private void ShowCachedBuilds(UpdateBuildChoice? previous = null)
     {
-        var choices = cachedBuilds
-            .Where(build => clientSettings.ExperimentalUpdates || build.Version.Prerelease is null)
-            .Select(build => new UpdateBuildChoice(build)).ToList();
+        var builds = cachedBuilds.Where(build => clientSettings.ExperimentalUpdates || build.Version.Prerelease is null).ToArray();
+        var labels = builds.ToLookup(build => build.Version.DisplayName);
+        var choices = builds.Select(build =>
+        {
+            string label = build.Version.DisplayName;
+            // Older prereleases sometimes reused beta.1 after increasing the patch number.
+            if (labels[label].Skip(1).Any())
+                label += $" · выпуск {build.Version.Number.Build}";
+            return new UpdateBuildChoice(build, label);
+        }).ToList();
         if (choices.Count > 0)
-            choices.Insert(0, new UpdateBuildChoice(choices[0].Release, Latest: true));
+            choices.Insert(0, choices[0] with { Latest = true });
 
         UpdateBuilds.ItemsSource = choices;
         UpdateBuilds.SelectedItem = previous is { Latest: false }
@@ -220,19 +227,20 @@ public partial class MainWindow
 
     private void ShowBuildStatus()
     {
-        if (SelectedUpdate is not { } build)
+        if (UpdateBuilds.SelectedItem is not UpdateBuildChoice choice)
         {
             UpdateStatus.Text = UpdateBuilds.HasItems ? "Выберите сборку для установки." : "В этом канале пока нет доступных сборок.";
             return;
         }
 
         var installed = GitHubUpdates.InstalledRelease;
+        var build = choice.Release;
         UpdateStatus.Text = UpdateBlockReason(build) ?? (build.Version.CompareTo(installed) switch
         {
-            < 0 => $"Вы выбрали более раннюю сборку {build.Version}.",
+            < 0 => $"Вы выбрали более раннюю сборку {choice.Label}.",
             _ => session is not null || killSwitch || backgroundUnavailable
-                ? $"Готово к установке сборки {build.Version} с сохранением VPN."
-                : $"Готово к установке сборки {build.Version}."
+                ? $"Готово к установке сборки {choice.Label} с сохранением VPN."
+                : $"Готово к установке сборки {choice.Label}."
         });
     }
 
@@ -241,9 +249,10 @@ public partial class MainWindow
         string? prepared = null;
         await RunAsync(async () =>
         {
-            if (buildListRequest is not null || SelectedUpdate is not { } release || !CanInstallUpdate(release))
+            if (buildListRequest is not null || UpdateBuilds.SelectedItem is not UpdateBuildChoice choice ||
+                !CanInstallUpdate(choice.Release))
                 return;
-            UpdateStatus.Text = $"Загружаем сборку {release.Version}…";
+            UpdateStatus.Text = $"Загружаем сборку {choice.Label}…";
             var progress = new Progress<int>(percent =>
             {
                 if (busy && !closing)
@@ -251,7 +260,7 @@ public partial class MainWindow
             });
             try
             {
-                prepared = await GitHubUpdates.PrepareAsync(release, progress, lifetime.Token);
+                prepared = await GitHubUpdates.PrepareAsync(choice.Release, progress, lifetime.Token);
             }
             catch
             {

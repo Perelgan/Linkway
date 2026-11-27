@@ -43,6 +43,7 @@ internal sealed partial class Mihomo
                 cancellationToken.ThrowIfCancellationRequested();
                 await save();
                 currentConfig = candidate;
+                _ = PrimeAutomaticRouteAsync(candidate);
                 CacheRemoteRules(directory, candidate);
             }
             catch (CoreConfigRejected)
@@ -69,6 +70,7 @@ internal sealed partial class Mihomo
         {
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
             await ReloadAsync(previous, deadline.Token);
+            _ = PrimeAutomaticRouteAsync(previous);
             return;
         }
         catch (Exception) { }

@@ -43,9 +43,10 @@ internal sealed partial class Mihomo : IAsyncDisposable
         StartAsync((port, controller, secret) => RoutingConfig.Preview(port, controller, secret, content), cancellationToken);
 
     public static Task<Mihomo> StartAsync(Profile source, string node, Profile[] sources, RoutingProfile? profile,
-        bool bypassLan, CancellationToken cancellationToken, string? sessionRoot = null, NetworkOptions? network = null) =>
+        bool bypassLan, CancellationToken cancellationToken, string? sessionRoot = null, NetworkOptions? network = null,
+        string? automaticTestUrl = null) =>
         StartAsync((port, controller, secret) => RoutingConfig.Build(port, controller, secret,
-            source, node, sources, profile, bypassLan, network), cancellationToken, sessionRoot);
+            source, node, sources, profile, bypassLan, network, automaticTestUrl), cancellationToken, sessionRoot);
 
     internal static Task<Mihomo> StartHostedAsync(Profile source, string node, Profile[] sources, RoutingProfile? profile,
         bool bypassLan, NetworkOptions? network, string runtimeDirectory, CancellationToken cancellationToken) =>
@@ -111,7 +112,10 @@ internal sealed partial class Mihomo : IAsyncDisposable
             await session.WaitReadyAsync(cancellationToken);
             await session.VerifyAsync(routing, false, cancellationToken);
             if (preparedDirectory is null)
+            {
+                _ = session.PrimeAutomaticRouteAsync(routing);
                 CacheRemoteRules(directory, routing);
+            }
             return session;
         }
         catch
@@ -234,6 +238,72 @@ internal sealed partial class Mihomo : IAsyncDisposable
 
     public Task<int?> CheckMainRouteAsync(CancellationToken cancellationToken) =>
         CheckDelayAsync($"proxies/{RoutingConfig.Main}/delay", cancellationToken);
+
+    public async Task<AutomaticRouteStatus?> ReadAutomaticRouteAsync(CancellationToken cancellationToken)
+    {
+        var config = currentConfig;
+        if (!config.UsesAutomaticServerSelection)
+            return null;
+        using var response = await GetAsync("proxies", cancellationToken);
+        var proxies = response.RootElement.GetProperty("proxies");
+        if (!ReferenceEquals(config, currentConfig) ||
+            !proxies.TryGetProperty(Group, out var group) ||
+            group.GetProperty("type").GetString() != "URLTest")
+            return null;
+
+        string url = group.GetProperty("testUrl").GetString()!;
+        string? current = group.GetProperty("now").GetString();
+        var members = group.GetProperty("all");
+        string? server = null;
+        int? delay = null;
+        int available = 0;
+        var failed = new List<string>();
+        foreach (var member in members.EnumerateArray())
+        {
+            string alias = member.GetString()!;
+            if (!config.ExpectedNodes.TryGetValue(alias, out var name) ||
+                !proxies.TryGetProperty(alias, out var proxy) ||
+                !proxy.GetProperty("extra").TryGetProperty(url, out var check))
+                continue;
+            if (!check.GetProperty("alive").GetBoolean())
+            {
+                failed.Add(name);
+                continue;
+            }
+            var history = check.GetProperty("history");
+            int last = history.GetArrayLength() - 1;
+            if (last < 0)
+                continue;
+            int milliseconds = history[last].GetProperty("delay").GetInt32();
+            if (milliseconds <= 0)
+                continue;
+            available++;
+            if (alias == current)
+            {
+                server = name;
+                delay = milliseconds;
+            }
+        }
+        return new(server, delay, available, members.GetArrayLength(), failed.ToArray());
+    }
+
+    private async Task PrimeAutomaticRouteAsync(RoutingConfig config)
+    {
+        if (!config.UsesAutomaticServerSelection)
+            return;
+        // The first scheduled probe can run before the file provider loads its servers.
+        await Task.Delay(TimeSpan.FromSeconds(1));
+        if (!ReferenceEquals(config, currentConfig))
+            return;
+        try
+        {
+            using var response = await api.GetAsync($"providers/proxies/{Group}/healthcheck");
+        }
+        catch (Exception error) when (error is HttpRequestException or OperationCanceledException or ObjectDisposedException)
+        {
+            // The core schedules further checks on its own.
+        }
+    }
 
     private async Task<int?> CheckDelayAsync(string path, CancellationToken cancellationToken)
     {

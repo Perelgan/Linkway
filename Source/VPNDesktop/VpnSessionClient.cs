@@ -9,6 +9,7 @@ internal sealed class VpnSessionClient(HostedConnection connection)
     public int Port => connection.Port;
     public DateTimeOffset Started => connection.Started;
     public string CoreVersion => connection.CoreVersion;
+    public bool AutomaticStatusSupported => connection.AutomaticStatusSupported;
 
     public static async Task WaitForHostAsync(CancellationToken token)
     {
@@ -48,6 +49,8 @@ internal sealed class VpnSessionClient(HostedConnection connection)
     public Task<ActiveConnection[]> GetConnectionsAsync(CancellationToken token) =>
         SendAsync<ActiveConnection[]>(new("connections"), token);
     public Task<int?> CheckMainRouteAsync(CancellationToken token) => SendAsync<int?>(new("health"), token);
+    public Task<AutomaticRouteStatus?> ReadAutomaticRouteAsync(CancellationToken token) =>
+        SendAsync<AutomaticRouteStatus?>(new("automatic-route"), token);
     public Task<string> DescribeDiagnosticConfigurationAsync(CancellationToken token) =>
         SendAsync<string>(new("configuration"), token);
     public Task<bool> TestDnsAsync(bool ipv6, CancellationToken token) => SendAsync<bool>(new("dns", Flag: ipv6), token);
