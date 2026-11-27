@@ -4,6 +4,7 @@ using System.Net.Http;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
+using System.Xml.Linq;
 using VPNDesktop;
 
 if (args.Contains("--ui", StringComparer.Ordinal))
@@ -59,6 +60,24 @@ try
         "An older selection retains its exact archive URL");
     Require(UpdateVersion.Parse("1.2.0")!.CompareTo(UpdateVersion.Parse("1.2.0-rc.1")) > 0,
         "A stable release supersedes a prerelease of the same version");
+
+    Require(RouteProbeTarget.Parse("https://пример.рф:8443/path?q=1") is { Host: "xn--e1afmkfd.xn--p1ai", Port: 8443 } &&
+        RouteProbeTarget.Parse("[2001:db8::1]:443")?.Authority == "[2001:db8::1]:443" &&
+        RouteProbeTarget.Parse("2001:db8::1")?.Authority == "[2001:db8::1]:443" &&
+        RouteProbeTarget.Parse("http://example.org/")?.Port == 80 &&
+        RouteProbeTarget.Parse("https://user:password@example.org/") is null &&
+        RouteProbeTarget.Parse("ftp://example.org") is null, "Route probe extracts IDN and IPv6 destinations without credentials or path");
+
+    const string startupSid = "S-1-5-21-111-222-333-1001";
+    const string startupLauncher = @"C:\Portable Apps\VPN & test\VPNDesktop.exe";
+    var startupTask = XElement.Parse(WindowsVpnStartup.TaskXml(startupLauncher, startupSid));
+    var taskSchema = startupTask.Name.Namespace;
+    Require(startupTask.Descendants(taskSchema + "UserId").Select(element => element.Value).SequenceEqual([startupSid, startupSid]) &&
+        startupTask.Descendants(taskSchema + "RunLevel").Single().Value == "HighestAvailable" &&
+        startupTask.Descendants(taskSchema + "LogonType").Single().Value == "InteractiveToken" &&
+        startupTask.Descendants(taskSchema + "Command").Single().Value == startupLauncher &&
+        startupTask.Descendants(taskSchema + "Arguments").Single().Value == WindowsVpnStartup.LaunchArgument,
+        "Startup task uses the current user's interactive elevated sign-in and safely encodes portable paths");
 
     var kernels = MihomoVersions.ReadReleases(JsonSerializer.SerializeToElement(new[]
     {
@@ -118,6 +137,18 @@ try
     await HostedSessionChecks.RunAsync(scratch, first, second, token);
 
     var serverDisplay = new ServerChoice(first, first.Nodes[0]);
+    var yamlEndpoint = ServerEndpoint.Read(first.Content).GetValueOrDefault("Same name");
+    string encodedLinks = Convert.ToBase64String(Encoding.UTF8.GetBytes(
+        "vless://fixture@127.0.0.1:8443#Test%20node\nvless://fixture@[2001:db8::8]:443#Test%20node"));
+    var endpoints = ServerEndpoint.Read(encodedLinks);
+    Require(yamlEndpoint is { Host: "127.0.0.1", Tcp: true } && yamlEndpoint.Port == primary.Port &&
+        endpoints["Test node"] is { Host: "127.0.0.1", Port: 8443, Tcp: true } &&
+        endpoints["Test node-01"] is { Host: "2001:db8::8", Port: 443 } &&
+        ServerEndpoint.Read("hy2://fixture@example.org:443#UDP")["UDP"] is { Tcp: false },
+        "Direct checks read server addresses from saved YAML and encoded links, including duplicate names and IPv6");
+    Require(await WindowsDirectProbe.MeasureAsync(yamlEndpoint!, [], token) is > 0 &&
+        await WindowsDirectProbe.MeasureAsync(new("127.0.0.1", deadPort, true), [], token) is null,
+        "Direct TCP probes reach the actual port and report closed ports without a Mihomo process");
     serverDisplay.SetCheckState(ServerCheckState.Available, 47);
     Require(serverDisplay.StatusText == "Доступен", "Response time is hidden by default");
     serverDisplay.ShowLatency = true;
@@ -177,6 +208,14 @@ try
     Require(await Request("unavailable.test") != "direct", "Unavailable VPN stays closed");
     Require(await Request("127.0.0.1") == "direct", "IPv4 direct");
     Require(await Request("[2001:db8::8]:443", explicitPort: true) == "primary", "IPv6 subnet dispatch to VPN");
+
+    var probes = await Task.WhenAll(core.ProbeRouteAsync("a.secondary.test", token),
+        core.ProbeRouteAsync($"127.0.0.1:{direct.Port}", token), core.ProbeRouteAsync("blocked.test", token));
+    Require(probes[0] is { Policy: "VPN", Outbound: "Same name", Rule: { } vpnRule } && vpnRule.Contains("secondary.test"),
+        $"Route probe attributes VPN and matching rule to its own TCP connection ({probes[0]})");
+    Require(probes[1] is { Policy: "DIRECT", Outbound: "DIRECT" }, $"Route probe detects a direct exit ({probes[1]})");
+    Require(probes[2] is { Policy: "REJECT", Outbound: "REJECT", Rule: "Domain blocked.test" },
+        $"Route probe recognizes a rejection even when the connection has already closed ({probes[2]})");
 
     using (var connection = await OpenRequest("a.secondary.test", "/hold"))
     {

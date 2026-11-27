@@ -51,6 +51,8 @@ internal sealed class VpnSessionClient(HostedConnection connection)
     public Task<string> DescribeDiagnosticConfigurationAsync(CancellationToken token) =>
         SendAsync<string>(new("configuration"), token);
     public Task<bool> TestDnsAsync(bool ipv6, CancellationToken token) => SendAsync<bool>(new("dns", Flag: ipv6), token);
+    public Task<RouteProbeResult> ProbeRouteAsync(string destination, CancellationToken token) =>
+        SendAsync<RouteProbeResult>(new("probe-route", Destination: destination), token);
     public Task<(string Host, string Kind)[]> GetDiagnosticRoutesAsync(IReadOnlyDictionary<int, byte> ports, CancellationToken token) =>
         SendAsync<(string, string)[]>(new("routes", Ports: ports.Keys.ToArray()), token);
 

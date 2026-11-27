@@ -3,6 +3,7 @@ using System.IO;
 using System.Net.Http;
 using System.Net.NetworkInformation;
 using System.Runtime.InteropServices;
+using System.Security;
 using System.Windows;
 using System.Windows.Interop;
 using Forms = System.Windows.Forms;
@@ -21,9 +22,12 @@ public partial class MainWindow
     private HwndSource? hotkeySource;
     private bool hotkeyRegistered, exitRequested, checkingRecovery;
     private DateTimeOffset? retryAt;
+    private DateTimeOffset? startupRetryUntil;
+    private DateTimeOffset nextStartupAttempt;
     private DateTimeOffset nextHealthCheck;
     private int failedHealthChecks, attempts;
     private ServerChoice? recoveryServer;
+    private bool vpnStartupEnabled;
 
     private static string StartupCommand => $"\"{Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "VPNDesktop.exe"))}\"";
 
@@ -38,6 +42,12 @@ public partial class MainWindow
         {
             StartupToggle.IsEnabled = false;
         }
+        try { StartupVpnToggle.IsChecked = vpnStartupEnabled = WindowsVpnStartup.IsEnabled(); }
+        catch (Exception error) when (error is COMException or IOException or SecurityException or UnauthorizedAccessException)
+        {
+            StartupVpnToggle.IsEnabled = false;
+            StartupVpnStatus.Text = "Не удалось прочитать настройки Планировщика заданий.";
+        }
         AutoConnectToggle.IsChecked = clientSettings.AutoConnect;
         AutoRecoverToggle.IsChecked = clientSettings.AutoRecover;
         TrayToggle.IsChecked = clientSettings.MinimizeToTray;
@@ -46,7 +56,7 @@ public partial class MainWindow
         HistoryToggle.IsChecked = clientSettings.SaveHistory;
     }
 
-    private async void SaveDesktopSettings(object sender, RoutedEventArgs e) => await RunAsync(() =>
+    private async void SaveDesktopSettings(object sender, RoutedEventArgs e) => await RunAsync(async () =>
     {
         var updated = clientSettings with
         {
@@ -56,36 +66,53 @@ public partial class MainWindow
             SaveHistory = HistoryToggle.IsChecked == true,
             CloseAction = (WindowCloseAction)Math.Max(0, CloseActionBox.SelectedIndex)
         };
-        if (StartupToggle.IsEnabled)
+        using var startup = StartupToggle.IsEnabled ? Registry.CurrentUser.CreateSubKey(StartupKey, writable: true) : null;
+        string? previous = startup?.GetValue(StartupName) as string;
+        bool enableVpnStartup = StartupVpnToggle.IsEnabled ? StartupVpnToggle.IsChecked == true : vpnStartupEnabled;
+        try
         {
-            using var startup = Registry.CurrentUser.CreateSubKey(StartupKey, writable: true);
-            string? previous = startup.GetValue(StartupName) as string;
-            try
+            if (startup is not null)
             {
-                if (StartupToggle.IsChecked == true)
+                if (StartupToggle.IsChecked == true && !enableVpnStartup)
                     startup.SetValue(StartupName, StartupCommand);
                 else if (string.Equals(previous, StartupCommand, StringComparison.OrdinalIgnoreCase))
                     startup.DeleteValue(StartupName, false);
-                updated.Save();
             }
-            catch
+            updated.Save();
+            if (enableVpnStartup != vpnStartupEnabled)
             {
-                if (previous is null)
-                    startup.DeleteValue(StartupName, false);
-                else
-                    startup.SetValue(StartupName, previous);
-                throw;
+                try { await WindowsVpnStartup.SetAsync(enableVpnStartup, lifetime.Token); }
+                catch (Exception error) when (error is COMException or IOException or System.ComponentModel.Win32Exception)
+                {
+                    clientSettings.Save();
+                    StartupVpnToggle.IsChecked = vpnStartupEnabled;
+                    StartupVpnStatus.Text = error is IOException ? error.Message : "Windows отклонила настройку автозапуска VPN.";
+                    throw;
+                }
             }
         }
+        catch
+        {
+            if (previous is null)
+                startup?.DeleteValue(StartupName, false);
+            else
+                startup?.SetValue(StartupName, previous);
+            throw;
+        }
+        vpnStartupEnabled = enableVpnStartup;
+        if (enableVpnStartup)
+            StartupToggle.IsChecked = false;
         else
-            updated.Save();
+            startupRetryUntil = null;
+        if (StartupVpnToggle.IsEnabled)
+            StartupVpnStatus.Text = enableVpnStartup ? "VPN будет подключаться при входе в Windows."
+                : "Подключение VPN при входе в Windows выключено.";
         clientSettings = updated;
         if (!updated.AutoRecover)
             retryAt = null;
         if (!updated.SaveHistory)
             ClearSessionHistory();
         Message.Text = "Настройки запуска сохранены.";
-        return Task.CompletedTask;
     });
 
     private void InitializeDesktopIntegration()
@@ -188,7 +215,11 @@ public partial class MainWindow
     private void QueueHealthCheck() => Dispatcher.BeginInvoke(() =>
     {
         if (!closing && clientSettings.AutoRecover && session is not null)
-            nextHealthCheck = DateTimeOffset.UtcNow.AddSeconds(4);
+        {
+            var due = DateTimeOffset.UtcNow.AddSeconds(4);
+            if (nextHealthCheck > due)
+                nextHealthCheck = due;
+        }
     });
 
     private void BeginRecovery()
@@ -201,6 +232,7 @@ public partial class MainWindow
     {
         nextHealthCheck = DateTimeOffset.UtcNow.AddSeconds(clientSettings.DeveloperMode ? 0 : 20);
         retryAt = null;
+        startupRetryUntil = null;
         attempts = failedHealthChecks = 0;
         runtimeLatency = null;
     }
@@ -215,7 +247,25 @@ public partial class MainWindow
 
     private async Task CheckRecoveryAsync()
     {
-        if (closing || busy || checkingRecovery || (!clientSettings.AutoRecover && !clientSettings.DeveloperMode))
+        if (closing || busy || checkingRecovery)
+            return;
+        if (startupRetryUntil is { } until && session is null && DateTimeOffset.UtcNow >= nextStartupAttempt)
+        {
+            if (DateTimeOffset.UtcNow >= until || backgroundUnavailable)
+            {
+                startupRetryUntil = null;
+                if (!backgroundUnavailable)
+                    NotifyTray("Автоподключение VPN не удалось. Откройте Linkway для проверки.");
+                return;
+            }
+            nextStartupAttempt = DateTimeOffset.UtcNow.AddSeconds(15);
+            if (SelectedServer is null && cabinetSession is not null)
+                await RunCabinetAsync(() => SyncCabinetAsync());
+            if (SelectedServer is not null)
+                await RunAsync(ConnectSelectedAsync);
+            return;
+        }
+        if (!clientSettings.AutoRecover && !clientSettings.DeveloperMode)
             return;
         if (clientSettings.AutoRecover && session is null && retryAt is { } retry && retry <= DateTimeOffset.UtcNow)
         {
@@ -253,8 +303,15 @@ public partial class MainWindow
             failedHealthChecks = 0;
             return;
         }
-        if (!clientSettings.AutoRecover || ++failedHealthChecks < 2)
+        if (!clientSettings.AutoRecover)
             return;
+        if (++failedHealthChecks < 2)
+        {
+            var due = DateTimeOffset.UtcNow.AddSeconds(5);
+            if (nextHealthCheck > due)
+                nextHealthCheck = due;
+            return;
+        }
         await RunAsync(async () =>
         {
             ScheduleRecovery();

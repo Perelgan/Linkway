@@ -9,6 +9,7 @@ internal enum ServerCheckState
     Testing,
     Available,
     Unavailable,
+    Unsupported,
     Error
 }
 
@@ -59,6 +60,7 @@ internal sealed class ServerChoice(Profile source, Node node) : INotifyPropertyC
         ServerCheckState.Testing => "Проверка…",
         ServerCheckState.Available => ShowLatency ? $"{delay} мс" : "Доступен",
         ServerCheckState.Unavailable => "Нет ответа",
+        ServerCheckState.Unsupported => "Без TCP-замера",
         ServerCheckState.Error => "Ошибка проверки",
         _ => "—"
     };

@@ -12,7 +12,7 @@ internal sealed partial class RoutingConfig
     public const string MainProvider = "nodes";
     public const string TunDevice = "VPNDesktop";
     private const string DnsGroup = "VPNDesktop-DNS";
-    private const string Dns = "https://1.1.1.1/dns-query";
+    internal const string BootstrapDns = "https://1.1.1.1/dns-query";
     private const string HealthUrl = "https://www.gstatic.com/generate_204";
     private const string ExcludedTypes = "direct|reject|rejectdrop|pass|passrule|compatible|dns|rematch|selector|fallback|urltest|loadbalance|relay";
 
@@ -373,7 +373,7 @@ internal sealed partial class RoutingConfig
     private void SetDns(string outbound, NetworkOptions? options = null)
     {
         options ??= new();
-        var (resolvers, policies) = options.ParseDns(Dns, outbound);
+        var (resolvers, policies) = options.ParseDns(BootstrapDns, outbound);
         configuration["dns"] = new Dictionary<string, object>
         {
             ["enable"] = true,
@@ -381,8 +381,8 @@ internal sealed partial class RoutingConfig
             ["enhanced-mode"] = options.FakeIp ? "fake-ip" : "redir-host",
             ["fake-ip-range6"] = "fd00:198:18::1/64",
             ["fake-ip-filter"] = new[] { "*.local", "localhost" },
-            ["default-nameserver"] = new[] { Dns },
-            ["proxy-server-nameserver"] = new[] { Dns },
+            ["default-nameserver"] = new[] { BootstrapDns },
+            ["proxy-server-nameserver"] = new[] { BootstrapDns },
             ["nameserver"] = resolvers,
             ["nameserver-policy"] = policies
         };

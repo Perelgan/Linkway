@@ -764,7 +764,7 @@
                                             </StackPanel>
                                         </Button>
                                         <Button x:Name="BulkCheckButton" MinWidth="127" Click="CheckAllServers"
-                                                AutomationProperties.Name="Проверить все">
+                                                AutomationProperties.Name="Проверить все" ToolTip="Измерить задержку TCP напрямую до каждого сервера">
                                             <StackPanel Orientation="Horizontal">
                                                 <Path x:Name="BulkCheckIcon" Style="{StaticResource IconPath}" Data="{StaticResource LucideActivity}"
                                                       Margin="0,0,8,0"
@@ -829,6 +829,7 @@
                                                 </Border>
                                                 <Button Grid.Column="3" Style="{StaticResource RowAction}" Content="Проверить"
                                                         Click="CheckServerRow" VerticalAlignment="Center"
+                                                        ToolTip="Измерить задержку TCP напрямую до сервера"
                                                         AutomationProperties.Name="{Binding Node.Name, StringFormat='Проверить сервер {0}'}"/>
                                             </Grid>
                                         </DataTemplate>
@@ -1121,6 +1122,21 @@
                         <TextBlock Style="{StaticResource PageTitle}" Text="Диагностика"/>
                         <Border Style="{StaticResource Card}" Margin="0,0,0,15">
                             <StackPanel>
+                                <TextBlock Style="{StaticResource SectionTitle}" Text="Проверка маршрута"/>
+                                <TextBlock Text="Проверяет TCP-маршрут через прокси Mihomo. Правила для конкретного приложения могут дать другой результат."
+                                           Foreground="{DynamicResource Muted}" TextWrapping="Wrap" Margin="0,0,0,10"/>
+                                <DockPanel Margin="0,0,0,10">
+                                    <Button x:Name="ProbeRouteButton" DockPanel.Dock="Right" Content="Проверить маршрут"
+                                            Click="RunRouteProbe" Margin="8,0,0,0"/>
+                                    <TextBox x:Name="ProbeRouteInput" AutomationProperties.Name="Домен, IP-адрес или URL"
+                                             ToolTip="Домен, IP-адрес или URL" MaxLength="2048" KeyDown="ProbeRouteKeyDown"/>
+                                </DockPanel>
+                                <TextBlock x:Name="ProbeRouteOutput" Text="Введите домен, IP-адрес или URL."
+                                           AutomationProperties.LiveSetting="Polite" TextWrapping="Wrap" Foreground="{DynamicResource Muted}"/>
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource Card}" Margin="0,0,0,15">
+                            <StackPanel>
                                 <TextBlock Style="{StaticResource SectionTitle}" Text="Сеть"/>
                                 <WrapPanel Margin="0,0,0,10">
                                     <Button Content="Проверить соединение" Click="RunDiagnostics" Margin="0,0,8,0"/>
@@ -1272,6 +1288,9 @@
                             <StackPanel>
                                 <TextBlock Style="{StaticResource SectionTitle}" Text="Запуск и восстановление"/>
                                 <CheckBox x:Name="StartupToggle" Style="{StaticResource SettingToggle}" Content="Запускать с Windows" Margin="0,0,0,10"/>
+                                <CheckBox x:Name="StartupVpnToggle" Style="{StaticResource SettingToggle}" Content="Подключать VPN при входе в Windows" Margin="0,0,0,8"/>
+                                <TextBlock x:Name="StartupVpnStatus" Foreground="{DynamicResource Muted}" TextWrapping="Wrap" Margin="0,0,0,10"
+                                           Text="Linkway запустится в трее. Для настройки Windows запросит права администратора."/>
                                 <CheckBox x:Name="AutoConnectToggle" Style="{StaticResource SettingToggle}" Content="Подключать VPN при запуске" Margin="0,0,0,10"/>
                                 <CheckBox x:Name="AutoRecoverToggle" Style="{StaticResource SettingToggle}" Content="Восстанавливать подключение после сна или сбоя" Margin="0,0,0,10"/>
                                 <CheckBox x:Name="TrayToggle" Style="{StaticResource SettingToggle}" Content="Убирать окно в трей при минимизации" Margin="0,0,0,10"/>

@@ -24,7 +24,13 @@ public partial class MainWindow
             if (cabinetSession is not null)
                 await SyncCabinetAsync();
         });
-        if (clientSettings.AutoConnect && session is null && SelectedServer is not null)
+        if (windowsStartup && session is null && !backgroundUnavailable &&
+            (SelectedServer is not null || cabinetSession is not null))
+        {
+            startupRetryUntil = DateTimeOffset.UtcNow.AddMinutes(2);
+            nextStartupAttempt = DateTimeOffset.UtcNow.AddSeconds(15);
+        }
+        if ((clientSettings.AutoConnect || windowsStartup) && session is null && SelectedServer is not null)
             await RunAsync(ConnectSelectedAsync);
     }
 

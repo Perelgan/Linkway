@@ -42,6 +42,9 @@ internal static class HostedSessionChecks
             using var browser = new HttpClient(handler);
             if (systemProxy != connection.Port || await browser.GetStringAsync("http://background.test/", token) != "primary")
                 throw new InvalidOperationException("Traffic did not survive closing the first interface connection.");
+            var route = await SendAsync<RouteProbeResult>(new("probe-route", Destination: "background.test"));
+            if (route is not { Policy: "VPN", Outbound: "Same name" })
+                throw new InvalidOperationException("The background host did not return the observed route.");
 
             var restored = await SendAsync<HostedAttachment>(new("attach"));
             if (!restored.Status.Connected || restored.Connection?.Started != connection.Started ||

@@ -22,14 +22,16 @@ public partial class MainWindow : Window
     private Task? serverCheckTask;
     private bool busy, closing, readyToClose, changingList, profilesReadable;
     private bool returnAfterDashboardImport;
+    private readonly bool windowsStartup;
     private Profile? Current => ProfilesList.SelectedItem as Profile;
     private ServerChoice? SelectedServer => NodesList.SelectedItem as ServerChoice;
 
     public MainWindow() : this(preview: false) { }
 
     // The rendering test exercises the same BAML and layout without opening the user profile.
-    internal MainWindow(bool preview)
+    internal MainWindow(bool preview, bool windowsStartup = false)
     {
+        this.windowsStartup = windowsStartup;
         InitializeComponent();
         ConnectionNav.IsChecked = true;
         if (preview)
@@ -200,6 +202,7 @@ public partial class MainWindow : Window
         bool useTun = TunMode.IsChecked == true;
         bool idle = !busy && !closing;
         bool editable = idle && !connected;
+        ProbeRouteButton.IsEnabled = ProbeRouteInput.IsEnabled = idle;
         UpdateSettingsControls(idle, connected);
         UpdateCabinetControls(idle, connected);
         UpdateRoutingControls(idle);
@@ -429,6 +432,7 @@ public partial class MainWindow : Window
     private async void ToggleConnection(object sender, RoutedEventArgs e) => await RunAsync(async () =>
     {
         AnimateConnectionButton();
+        startupRetryUntil = null;
         if (session is not null)
         {
             retryAt = null;
@@ -528,23 +532,39 @@ public partial class MainWindow : Window
     {
         if (servers.Length == 0)
             return;
+        if (killSwitch)
+        {
+            ServerListSummary.Text = "Kill Switch блокирует прямую проверку серверов.";
+            return;
+        }
 
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
         serverCheckCancellation = cancellation;
         UpdateControls();
-        ServerListSummary.Text = $"Проверяем серверы · 0 из {servers.Length}";
+        ServerListSummary.Text = $"Проверяем напрямую · 0 из {servers.Length}";
         foreach (var server in servers)
             server.SetCheckState(ServerCheckState.Queued);
         int completed = 0;
         int reachable = 0;
         try
         {
+            var paths = WindowsDirectProbe.GetPaths();
             foreach (var source in servers.GroupBy(server => server.Source.Id))
             {
                 cancellation.Token.ThrowIfCancellationRequested();
-                await CheckSourceAsync(source.ToArray(), ReportProgress, cancellation.Token);
+                string content = source.First().Source.Content;
+                var endpoints = await Task.Run(() => ServerEndpoint.Read(content), cancellation.Token);
+                foreach (var batch in source.Chunk(ParallelServerChecks))
+                {
+                    cancellation.Token.ThrowIfCancellationRequested();
+                    await Task.WhenAll(batch.Select(async server =>
+                    {
+                        await CheckOneAsync(server, endpoints.GetValueOrDefault(server.Node.Name), paths, cancellation.Token);
+                        ReportProgress(server);
+                    }));
+                }
             }
-            ServerListSummary.Text = $"Доступно {reachable} из {completed}";
+            ServerListSummary.Text = $"Ответили напрямую {reachable} из {completed}";
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {
@@ -567,52 +587,25 @@ public partial class MainWindow : Window
         }
     }
 
-    private async Task CheckSourceAsync(ServerChoice[] servers, Action<ServerChoice> report, CancellationToken cancellationToken)
+    private static async Task CheckOneAsync(ServerChoice server, ServerEndpoint? endpoint, WindowsDirectProbe.Path[] paths,
+        CancellationToken cancellationToken)
     {
-        var source = servers[0].Source;
-        try
-        {
-            // The check must survive connecting or disposing the main VPN session.
-            await using var core = await Mihomo.StartAsync(source.Content, cancellationToken);
-            foreach (var batch in servers.Chunk(ParallelServerChecks))
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                await Task.WhenAll(batch.Select(async server =>
-                {
-                    await CheckOneAsync(core, server, cancellationToken);
-                    report(server);
-                }));
-            }
-        }
-        catch (Exception error) when (error is IOException or Win32Exception or HttpRequestException or UnauthorizedAccessException)
-        {
-            foreach (var server in servers.Where(server => server.CheckState == ServerCheckState.Queued))
-            {
-                server.SetCheckState(ServerCheckState.Error);
-                report(server);
-            }
-        }
-    }
-
-    private static async Task CheckOneAsync(Mihomo core, ServerChoice server, CancellationToken cancellationToken)
-    {
-        server.SetCheckState(ServerCheckState.Testing);
-        try
-        {
-            int? delay = await core.CheckServerAsync(server.Node.Name, cancellationToken);
-            if (delay is int milliseconds)
-                server.SetCheckState(ServerCheckState.Available, milliseconds);
-            else
-                server.SetCheckState(ServerCheckState.Unavailable);
-        }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-        {
-            server.SetCheckState(ServerCheckState.Unavailable);
-        }
-        catch (HttpRequestException)
+        if (endpoint is null)
         {
             server.SetCheckState(ServerCheckState.Error);
+            return;
         }
+        if (!endpoint.Tcp)
+        {
+            server.SetCheckState(ServerCheckState.Unsupported);
+            return;
+        }
+        server.SetCheckState(ServerCheckState.Testing);
+        int? delay = await WindowsDirectProbe.MeasureAsync(endpoint, paths, cancellationToken);
+        if (delay is int milliseconds)
+            server.SetCheckState(ServerCheckState.Available, milliseconds);
+        else
+            server.SetCheckState(ServerCheckState.Unavailable);
     }
 
     private async Task StopAsync(bool preserveKillSwitch = false)

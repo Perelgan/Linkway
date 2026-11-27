@@ -201,6 +201,7 @@ internal sealed class VpnSessionHost(string pipeName, string runtimeDirectory, A
         "health" => await RequireCore().CheckMainRouteAsync(token),
         "configuration" => await RequireCore().DescribeDiagnosticConfigurationAsync(token),
         "dns" => await RequireCore().TestDnsAsync(request.Flag, token),
+        "probe-route" => await RequireCore().ProbeRouteAsync(request.Destination, token),
         "routes" => await RequireCore().GetDiagnosticRoutesAsync(
             (request.Ports ?? []).Distinct().ToDictionary(port => port, _ => (byte)0), token),
         _ => throw new IOException("Неизвестная операция фонового сеанса Linkway.")

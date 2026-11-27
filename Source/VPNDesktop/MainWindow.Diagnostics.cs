@@ -14,8 +14,6 @@ namespace VPNDesktop;
 
 public partial class MainWindow
 {
-    // Winsock uses option 31 for both IP_UNICAST_IF and IPV6_UNICAST_IF.
-    private const SocketOptionName UnicastInterface = (SocketOptionName)31;
     private static readonly string SessionHistoryPath = Path.Combine(ProfileStore.DirectoryPath, "session-history.bin");
     private readonly Queue<EventEntry> journal = new();
     private readonly List<SessionEntry> history = [];
@@ -259,14 +257,11 @@ public partial class MainWindow
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(3));
-        bool ipv4 = local.AddressFamily == AddressFamily.InterNetwork;
         try
         {
             using var socket = new Socket(local.AddressFamily, dns ? SocketType.Dgram : SocketType.Stream,
                 dns ? ProtocolType.Udp : ProtocolType.Tcp);
-            socket.SetSocketOption(ipv4 ? SocketOptionLevel.IP : SocketOptionLevel.IPv6,
-                UnicastInterface, ipv4 ? IPAddress.HostToNetworkOrder(index) : index);
-            socket.Bind(new IPEndPoint(local, 0));
+            WindowsDirectProbe.Bind(socket, local, index);
             await socket.ConnectAsync(target, deadline.Token);
             if (dns)
             {

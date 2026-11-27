@@ -20,7 +20,8 @@ internal sealed record HostedConfiguration(HostedSource Source, string Node, Hos
 internal sealed record HostedConnection(HostedSource Source, string Node, bool Tun, int Port, DateTimeOffset Started, string CoreVersion);
 internal sealed record HostedStatus(bool Connected, bool Guard);
 internal sealed record HostedAttachment(HostedStatus Status, HostedConnection? Connection);
-internal sealed record HostRequest(string Command, HostedConfiguration? Configuration = null, bool Flag = false, int[]? Ports = null);
+internal sealed record HostRequest(string Command, HostedConfiguration? Configuration = null, bool Flag = false,
+    int[]? Ports = null, string? Destination = null);
 internal sealed record HostReply(JsonElement Value, string? Error = null, bool Recovery = false, bool Prepared = false);
 
 internal static class HostProtocol

@@ -232,9 +232,6 @@ internal sealed partial class Mihomo : IAsyncDisposable
         await VerifyTunAsync(true, cancellationToken);
     }
 
-    public Task<int?> CheckServerAsync(string name, CancellationToken cancellationToken) =>
-        CheckDelayAsync($"providers/proxies/nodes/{Uri.EscapeDataString(name)}/healthcheck", cancellationToken);
-
     public Task<int?> CheckMainRouteAsync(CancellationToken cancellationToken) =>
         CheckDelayAsync($"proxies/{RoutingConfig.Main}/delay", cancellationToken);
 

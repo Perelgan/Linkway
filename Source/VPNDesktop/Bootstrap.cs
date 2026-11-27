@@ -12,6 +12,12 @@ internal static class Bootstrap
     private static void Main(string[] args)
     {
         AssemblyLoadContext.Default.Resolving += ResolveLanguageAssembly;
+        if (args is [WindowsVpnStartup.ConfigureArgument, string sid, "enable" or "disable"])
+        {
+            try { WindowsVpnStartup.Configure(sid, args[2] == "enable"); }
+            catch (Exception) { Environment.ExitCode = 1; }
+            return;
+        }
         if (args is [HostProtocol.Argument])
         {
             if (HostRuntime.IsSnapshot(AppContext.BaseDirectory))

@@ -152,6 +152,33 @@ internal sealed partial class SubscriptionRouting
     private static bool MayHaveRouting(string content) =>
         content.Contains("rules", StringComparison.Ordinal) && RoutingSectionPattern().IsMatch(content);
 
+    internal static Dictionary<string, ServerEndpoint> ReadProxyEndpoints(string content)
+    {
+        var endpoints = new Dictionary<string, ServerEndpoint>(StringComparer.Ordinal);
+        if (!content.Contains("proxies", StringComparison.Ordinal))
+            return endpoints;
+        try
+        {
+            var yaml = new YamlStream();
+            using var reader = new StringReader(content);
+            yaml.Load(new LimitedParser(new Parser(reader)));
+            if (yaml.Documents.Count == 1 && yaml.Documents[0].RootNode is YamlMappingNode root)
+                foreach (var proxy in Sequence(root, "proxies").OfType<YamlMappingNode>())
+                {
+                    string name = (Child(proxy, "name") as YamlScalarNode)?.Value ?? "";
+                    var endpoint = ServerEndpoint.Create(ReadString(proxy, "server"), ReadString(proxy, "port"),
+                        ReadString(proxy, "type"), ReadString(proxy, "network"), ReadString(proxy, "transport"));
+                    if (endpoint is not null)
+                        endpoints.TryAdd(name, endpoint);
+                }
+        }
+        catch (Exception error) when (error is YamlException or ArgumentException or InvalidOperationException or IOException)
+        {
+            endpoints.Clear();
+        }
+        return endpoints;
+    }
+
     [GeneratedRegex("""(?m)(?:^|[,{])\s*['"]?rules['"]?\s*:""")]
     private static partial Regex RoutingSectionPattern();
 

@@ -43,6 +43,11 @@ internal static class UiSmoke
                 VerifySubscriptionRulesSwitch(window);
                 VerifySubscriptionGroupScrolling(window);
                 VerifyTrafficRow(window);
+                if (window.FindName("ProbeRouteInput") is not TextBox ||
+                    window.FindName("ProbeRouteButton") is not Button ||
+                    window.FindName("ProbeRouteOutput") is not TextBlock ||
+                    window.FindName("StartupVpnToggle") is not CheckBox)
+                    throw new InvalidOperationException("Route diagnostics or sign-in startup controls are missing.");
                 if (window.Icon is null ||
                     window.FindName("ConnectionButtonScale") is not ScaleTransform ||
                     window.FindName("SidebarSpeed") is not TextBlock ||
