@@ -266,6 +266,19 @@ try
     }
     Require((await core.DescribeDiagnosticConfigurationAsync(token)).Contains("наборов загружено 0 из 0"),
         "Diagnostic configuration reports verified rule counts");
+    string applicationPath = RoutingProfiles.Normalize(RouteMatch.Application, Environment.ProcessPath);
+    var applicationRule = new RouteRule(RouteMatch.Application, applicationPath, RouteProtocol.Any, new(RouteKind.Main));
+    var appRouting = draft with { Rules = [applicationRule, .. draft.Rules] };
+    await core.ApplyRoutingAsync(first, "Same name", sources, appRouting, false, () => { }, token);
+    Require(await Request("127.0.0.1") == "primary", "An application rule uses the main VPN instead of the direct default");
+    appRouting = draft with
+    {
+        Default = new(RouteKind.Main),
+        Rules = [applicationRule with { Target = new(RouteKind.Direct) }, .. draft.Rules]
+    };
+    await core.ApplyRoutingAsync(first, "Same name", sources, appRouting, false, () => { }, token);
+    Require(await Request("127.0.0.1") == "direct", "An application rule can send the same executable directly");
+    await core.ApplyRoutingAsync(first, "Same name", sources, draft, false, () => { }, token);
     Require(MainWindow.DescribeHttpFailure(HttpRequestError.ProxyTunnelError, null) == "ошибка HTTP CONNECT" &&
         MainWindow.DescribeHttpFailure(HttpRequestError.SecureConnectionError, null) == "ошибка TLS" &&
         MainWindow.DescribeHttpFailure(HttpRequestError.Unknown, HttpStatusCode.BadGateway) == "HTTP 502",

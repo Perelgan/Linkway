@@ -110,6 +110,8 @@ public partial class MainWindow
     {
         if (session is null && killSwitch)
         {
+            retryAt = null;
+            startupRetryUntil = null;
             await StopAsync();
             Message.Text = "Kill Switch снял блокировку сети.";
         }

@@ -9,6 +9,7 @@ using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Windows;
+using System.Windows.Controls;
 
 namespace VPNDesktop;
 
@@ -83,7 +84,8 @@ public partial class MainWindow
             if (down == 0 && up == 0)
                 continue;
             var app = trafficApplications.GetValueOrDefault(ApplicationLookupKey(connection));
-            Add(appTraffic, app?.Key ?? "other", app?.Name ?? "Остальные приложения", app?.Icon, down, up);
+            Add(appTraffic, app?.Key ?? "other", app?.Name ?? "Остальные приложения", app?.Icon, down, up,
+                app is null || app.Key == "unknown" ? null : connection.Path);
             string outbound = connection.Outbound;
             string label = outbound switch
             {
@@ -98,20 +100,53 @@ public partial class MainWindow
             RefreshTraffic();
 
         static void Add(Dictionary<string, TrafficRow> totals, string key, string name,
-            System.Windows.Media.Imaging.BitmapSource? icon, long down, long up)
+            System.Windows.Media.Imaging.BitmapSource? icon, long down, long up, string? path = null)
         {
             if (totals.Count >= 256 && !totals.ContainsKey(key))
             {
                 key = "Остальные";
                 name = "Остальные";
                 icon = null;
+                path = null;
             }
-            if (totals.TryGetValue(key, out var previous))
-                totals[key] = previous with { Download = previous.Download + down, Upload = previous.Upload + up, Icon = previous.Icon ?? icon };
-            else
-                totals[key] = new(name, down, up, icon);
+            var previous = totals.GetValueOrDefault(key) ?? new TrafficRow(name, 0, 0);
+            var paths = previous.ExecutablePaths;
+            if (!string.IsNullOrEmpty(path) && paths?.Contains(path, StringComparer.OrdinalIgnoreCase) != true &&
+                Path.IsPathFullyQualified(path) && Path.GetExtension(path).Equals(".exe", StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    string normalized = RoutingProfiles.Normalize(RouteMatch.Application, path);
+                    if (paths?.Contains(normalized, StringComparer.OrdinalIgnoreCase) != true)
+                        paths = [.. paths ?? [], normalized];
+                }
+                catch (IOException) { }
+            }
+            totals[key] = previous with
+            {
+                Download = previous.Download + down,
+                Upload = previous.Upload + up,
+                Icon = previous.Icon ?? icon,
+                ExecutablePaths = paths
+            };
         }
     }
+
+    private async void AddRuleFromTraffic(object sender, RoutedEventArgs e) => await EditDraftAsync(profile =>
+    {
+        if (!routingReadable || sender is not Button { DataContext: TrafficRow { ExecutablePaths: { Length: > 0 } paths } })
+            return;
+
+        if (EditRuleDialog(new(RouteMatch.Application, paths[0], RouteProtocol.Any, new(RouteKind.Main)),
+            executablePaths: paths) is not { } rule)
+            return;
+
+        RoutingRuleFilter.Clear();
+        SaveDraft(profile with { Rules = [rule, .. profile.Rules] }, 0);
+        RoutingNav.IsChecked = true;
+        RoutingRulesTab.IsChecked = true;
+        RoutingRuleList.ScrollIntoView(RoutingRuleList.SelectedItem);
+    });
 
     private static string ApplicationLookupKey(ActiveConnection connection) =>
         connection.Path.Length != 0 ? "path:" + connection.Path : "name:" + connection.Process;

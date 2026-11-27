@@ -65,7 +65,7 @@ public partial class MainWindow
         if (email.Length == 0 || password.Length == 0)
             throw new IOException("Введите email и пароль от кабинета.");
         CabinetPasswordBox.Clear();
-        SetCabinetStatus("Входим в аккаунт…");
+        CabinetStatus.Text = "Входим в аккаунт…";
         var tokens = await new CabinetApi().LoginAsync(email, password, lifetime.Token);
         await CompleteCabinetLoginAsync(tokens, email);
     });
@@ -78,7 +78,7 @@ public partial class MainWindow
         UpdateControls();
         try
         {
-            SetCabinetStatus("Получаем ссылку на Telegram-бота…");
+            CabinetStatus.Text = "Получаем ссылку на Telegram-бота…";
             var challenge = await api.RequestTelegramAsync(pending.Token);
             if (challenge.BotUsername is not { } bot || !Regex.IsMatch(bot, @"\A[A-Za-z0-9_]{5,32}\z")
                 || challenge.Token is not { } token || !Regex.IsMatch(token, @"\A[A-Za-z0-9_-]{16,56}\z")
@@ -87,7 +87,7 @@ public partial class MainWindow
 
             var deadline = DateTimeOffset.UtcNow.AddSeconds(Math.Min(challenge.ExpiresIn, 300));
             Process.Start(new ProcessStartInfo($"https://t.me/{bot}?start=webauth_{token}") { UseShellExecute = true });
-            SetCabinetStatus("Откройте бота в Telegram и подтвердите вход.");
+            CabinetStatus.Text = "Откройте бота в Telegram и подтвердите вход.";
             while (DateTimeOffset.UtcNow < deadline)
             {
                 await Task.Delay(TimeSpan.FromSeconds(2), pending.Token);
@@ -164,7 +164,7 @@ public partial class MainWindow
         if (cabinetSession is not { } saved)
             return;
         var api = new CabinetApi();
-        SetCabinetStatus("Загружаем подписки аккаунта…");
+        CabinetStatus.Text = "Загружаем подписки аккаунта…";
         try
         {
             cabinetAccessToken ??= await RefreshCabinetTokenAsync(api, saved);
@@ -231,9 +231,9 @@ public partial class MainWindow
             int count = loaded.Sum(profile => profile.Nodes.Length);
             string status = unavailable > 0 ? $"Серверов в списке: {count}. Не удалось обновить подписок: {unavailable}."
                 : count > 0 ? $"Серверов из аккаунта: {count}." : "В аккаунте нет активных подписок.";
-            if (loaded.Count == 1)
-                status += $" {SubscriptionRuleSummary(loaded[0])}";
-            SetCabinetStatus(status);
+            if (unavailable > 0)
+                Message.Text = status;
+            CabinetStatus.Text = loaded.Count == 1 ? $"{status} {SubscriptionRuleSummary(loaded[0])}" : status;
             if (deviceError is not null)
                 SetCabinetStatus($"{deviceError} Рабочих серверов в списке: {count}.");
         }

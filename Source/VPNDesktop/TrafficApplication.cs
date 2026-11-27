@@ -74,8 +74,10 @@ internal sealed partial record TrafficApplication(string Key, string Name, Bitma
     private static partial Regex WindowsPackage();
 }
 
-internal sealed record TrafficRow(string Name, long Download, long Upload, BitmapSource? Icon = null)
+internal sealed record TrafficRow(string Name, long Download, long Upload, BitmapSource? Icon = null,
+    string[]? ExecutablePaths = null)
 {
+    public bool CanCreateRule => ExecutablePaths is { Length: > 0 };
     public string Amount => $"↓ {Format(Download)}     ↑ {Format(Upload)}";
     public string Details => $"{Name}\nПолучено: {Download:N0} Б\nОтправлено: {Upload:N0} Б";
 

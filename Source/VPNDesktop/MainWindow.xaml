@@ -1170,6 +1170,7 @@
                                                         <Grid.ColumnDefinitions>
                                                             <ColumnDefinition Width="Auto"/>
                                                             <ColumnDefinition Width="*"/>
+                                                            <ColumnDefinition Width="Auto"/>
                                                         </Grid.ColumnDefinitions>
                                                         <Border Width="34" Height="34" Margin="0,0,9,0" CornerRadius="8"
                                                                 Background="{DynamicResource Hover}" VerticalAlignment="Center">
@@ -1184,10 +1185,18 @@
                                                             <TextBlock Text="{Binding Amount}" TextWrapping="Wrap" Margin="0,2,0,0" FontSize="12"
                                                                        Foreground="{DynamicResource Muted}"/>
                                                         </StackPanel>
+                                                        <Button x:Name="AppTrafficAddRule" Grid.Column="2" Click="AddRuleFromTraffic"
+                                                                Style="{StaticResource RowAction}" Margin="6,0,0,0" VerticalAlignment="Center"
+                                                                ToolTip="Создать правило для приложения" AutomationProperties.Name="Создать правило для приложения">
+                                                            <Path Style="{StaticResource IconPath}" Data="{StaticResource LucidePlus}" Width="14" Height="14"/>
+                                                        </Button>
                                                     </Grid>
                                                     <DataTemplate.Triggers>
                                                         <DataTrigger Binding="{Binding Icon}" Value="{x:Null}">
                                                             <Setter TargetName="FallbackAppIcon" Property="Visibility" Value="Visible"/>
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding CanCreateRule}" Value="False">
+                                                            <Setter TargetName="AppTrafficAddRule" Property="Visibility" Value="Collapsed"/>
                                                         </DataTrigger>
                                                     </DataTemplate.Triggers>
                                                 </DataTemplate>

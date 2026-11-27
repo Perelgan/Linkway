@@ -91,11 +91,15 @@ public partial class MainWindow
     }
 
     private RouteRule? EditRuleDialog(RouteRule rule,
-        IReadOnlyList<(RouteMatch Match, string Text)>? fromConnection = null)
+        IReadOnlyList<(RouteMatch Match, string Text)>? fromConnection = null, string[]? executablePaths = null)
     {
         var editor = NewEditor(this, "Правило маршрутизации");
         var type = SelectField(editor, "Условие", Enum.GetValues<RouteMatch>().Select(kind => new Choice<RouteMatch>(kind, MatchLabel(kind))), rule.Match);
+        var observed = executablePaths is { Length: > 1 } ? SelectField(editor, "Файл из статистики трафика",
+            executablePaths.Select(path => new Choice<string>(path, path)), rule.Value) : null;
         var value = TextField(editor, "Значение", rule.Value);
+        if (observed is not null)
+            observed.SelectionChanged += (_, _) => value.Text = Read<string>(observed);
         var hint = new TextBlock { Foreground = BrushFor("Muted"), TextWrapping = TextWrapping.Wrap };
         editor.Body.Children.Add(hint);
         var appButtons = ActionRow(editor.Body);
@@ -111,7 +115,7 @@ public partial class MainWindow
         installed.Click += (_, _) => PickApplication(editor.Window, false, value);
         var protocol = SelectField(editor, "Протокол", Enum.GetValues<RouteProtocol>().Select(item =>
             new Choice<RouteProtocol>(item, ProtocolLabel(item))), rule.Protocol);
-        var target = TargetField(editor, rule.Target);
+        var target = TargetField(editor, rule.Target, allowMain: rule.Match == RouteMatch.Application || rule.Target.Kind == RouteKind.Main);
 
         type.SelectionChanged += (_, _) =>
         {
@@ -131,6 +135,8 @@ public partial class MainWindow
         {
             var kind = Read<RouteMatch>(type);
             appButtons.Visibility = kind == RouteMatch.Application ? Visibility.Visible : Visibility.Collapsed;
+            if (observed is not null)
+                observed.IsEnabled = kind == RouteMatch.Application;
             hint.Text = kind switch
             {
                 RouteMatch.Application => "Полный путь к EXE-файлу.",

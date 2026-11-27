@@ -7,6 +7,7 @@ namespace VPNDesktop;
 internal sealed class VpnSessionClient(HostedConnection connection)
 {
     public int Port => connection.Port;
+    public bool Tun => connection.Tun;
     public DateTimeOffset Started => connection.Started;
     public string CoreVersion => connection.CoreVersion;
     public bool AutomaticStatusSupported => connection.AutomaticStatusSupported;

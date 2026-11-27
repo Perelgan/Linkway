@@ -154,11 +154,21 @@ internal static class UiSmoke
         var item = (ListBoxItem)list.ItemContainerGenerator.ContainerFromIndex(0);
         var presenter = FindPresenter(item) ?? throw new InvalidOperationException("Traffic row was not rendered.");
         var icon = (Path)list.ItemTemplate.FindName("FallbackAppIcon", presenter);
+        var action = (Button)list.ItemTemplate.FindName("AppTrafficAddRule", presenter);
         var row = (Grid)VisualTreeHelper.GetChild(presenter, 0);
         var labels = ((StackPanel)row.Children[1]).Children.OfType<TextBlock>().ToArray();
         if (icon.Visibility != Visibility.Visible || labels[0].Text != "Тестовое приложение" ||
             !labels[1].Text.Contains("2 КиБ", StringComparison.Ordinal))
             throw new InvalidOperationException("Application traffic lost its icon, label, or formatted traffic totals.");
+        if (action.Visibility != Visibility.Collapsed)
+            throw new InvalidOperationException("Traffic without an executable path offers to create an application rule.");
+
+        list.ItemsSource = new[] { new TrafficRow("Тестовое приложение", 2048, 1024, ExecutablePaths: [@"C:\Test\App.exe"]) };
+        Render((FrameworkElement)window.Content);
+        item = (ListBoxItem)list.ItemContainerGenerator.ContainerFromIndex(0);
+        presenter = FindPresenter(item) ?? throw new InvalidOperationException("Traffic row was not rendered.");
+        if (list.ItemTemplate.FindName("AppTrafficAddRule", presenter) is not Button { Visibility: Visibility.Visible })
+            throw new InvalidOperationException("Traffic with an executable path has no create-rule action.");
 
         static ContentPresenter? FindPresenter(DependencyObject parent)
         {

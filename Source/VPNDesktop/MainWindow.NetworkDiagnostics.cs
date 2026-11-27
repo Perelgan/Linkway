@@ -18,6 +18,7 @@ public partial class MainWindow
     private static readonly Uri PrimaryProbe = new("https://www.gstatic.com/generate_204");
     private static readonly Uri SecondaryProbe = new("https://example.org/");
     private static readonly Uri Ipv6Probe = new("https://api6.ipify.org/");
+    private static readonly IPAddress TunRouteProbe = IPAddress.Parse("1.1.1.1");
 
     private static async Task<string[]> CollectNetworkChecksAsync(VpnSessionClient? core, bool tun, bool guard, CancellationToken token)
     {
@@ -190,7 +191,7 @@ public partial class MainWindow
         yield return $"Другие активные туннельные адаптеры: {otherTunnels}.";
         if (core is not null && tun)
         {
-            yield return "Маршрут Windows к тестовому IPv4: " + RouteInterface(IPAddress.Parse("1.1.1.1"), adapters, linkway);
+            yield return "Маршрут Windows к тестовому IPv4: " + RouteInterface(TunRouteProbe, adapters, linkway);
             yield return "Маршрут Windows к тестовому IPv6: " + RouteInterface(IPAddress.Parse("2606:4700:4700::1111"), adapters, linkway);
         }
     }
@@ -204,8 +205,7 @@ public partial class MainWindow
 
     private static string RouteInterface(IPAddress address, NetworkInterface[] adapters, NetworkInterface? linkway)
     {
-        var endpoint = new IPEndPoint(address, 443).Serialize();
-        if (GetBestInterfaceEx(endpoint.Buffer.Span[..endpoint.Size].ToArray(), out uint index) != 0)
+        if (BestInterfaceIndex(address) is not uint index)
             return "маршрут не найден.";
         bool ipv4 = address.AddressFamily == AddressFamily.InterNetwork;
         var best = adapters.FirstOrDefault(adapter =>
@@ -215,6 +215,20 @@ public partial class MainWindow
         });
         return best is null ? "адаптер не определён." : best == linkway ? "адаптер Linkway TUN."
             : IsTunnel(best) ? "другой туннельный адаптер." : "обычный сетевой адаптер.";
+    }
+
+    private static uint? BestInterfaceIndex(IPAddress address)
+    {
+        var endpoint = new IPEndPoint(address, 443).Serialize();
+        return GetBestInterfaceEx(endpoint.Buffer.Span[..endpoint.Size].ToArray(), out uint index) == 0 ? index : null;
+    }
+
+    private static bool HasWindowsTunRoute()
+    {
+        var adapter = NetworkInterface.GetAllNetworkInterfaces().FirstOrDefault(item =>
+            item.OperationalStatus == OperationalStatus.Up && item.Name.Equals(RoutingConfig.TunDevice, StringComparison.OrdinalIgnoreCase));
+        return adapter?.GetIPProperties().GetIPv4Properties()?.Index is int index &&
+            BestInterfaceIndex(TunRouteProbe) == (uint)index;
     }
 
     [DllImport("iphlpapi.dll", ExactSpelling = true)]

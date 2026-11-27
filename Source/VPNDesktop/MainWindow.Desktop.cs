@@ -150,6 +150,7 @@ public partial class MainWindow
         };
         SystemEvents.PowerModeChanged += OnPowerChanged;
         NetworkChange.NetworkAddressChanged += OnNetworkChanged;
+        NetworkChange.NetworkAvailabilityChanged += OnNetworkAvailabilityChanged;
         RecordEvent("Linkway запущен");
         LoadSessionHistory();
     }
@@ -158,6 +159,7 @@ public partial class MainWindow
     {
         SystemEvents.PowerModeChanged -= OnPowerChanged;
         NetworkChange.NetworkAddressChanged -= OnNetworkChanged;
+        NetworkChange.NetworkAvailabilityChanged -= OnNetworkAvailabilityChanged;
         if (hotkeySource is { } source)
         {
             if (hotkeyRegistered)
@@ -207,19 +209,23 @@ public partial class MainWindow
     private void OnPowerChanged(object sender, PowerModeChangedEventArgs e)
     {
         if (e.Mode == PowerModes.Resume)
-            QueueHealthCheck();
+            QueueHealthCheck(retrySoon: true);
     }
 
     private void OnNetworkChanged(object? sender, EventArgs e) => QueueHealthCheck();
 
-    private void QueueHealthCheck() => Dispatcher.BeginInvoke(() =>
+    private void OnNetworkAvailabilityChanged(object? sender, NetworkAvailabilityEventArgs e) =>
+        QueueHealthCheck(retrySoon: e.IsAvailable);
+
+    private void QueueHealthCheck(bool retrySoon = false) => Dispatcher.BeginInvoke(() =>
     {
-        if (!closing && clientSettings.AutoRecover && session is not null)
-        {
-            var due = DateTimeOffset.UtcNow.AddSeconds(4);
-            if (nextHealthCheck > due)
-                nextHealthCheck = due;
-        }
+        if (closing || !clientSettings.AutoRecover)
+            return;
+        var due = DateTimeOffset.UtcNow.AddSeconds(4);
+        if (session is not null && nextHealthCheck > due)
+            nextHealthCheck = due;
+        if (retrySoon && session is null && retryAt > due)
+            retryAt = due;
     });
 
     private void BeginRecovery()
@@ -281,16 +287,31 @@ public partial class MainWindow
             return;
         }
 
-        if (session is not { } core || DateTimeOffset.UtcNow < nextHealthCheck)
-            return;
-        // Mihomo keeps checking the entire automatic group, including when every server is down.
-        if (AutomaticServerEnabled && core.AutomaticStatusSupported)
+        if (session is not { } core || routingEmergency || DateTimeOffset.UtcNow < nextHealthCheck)
             return;
         var server = activeServer;
         nextHealthCheck = DateTimeOffset.UtcNow.AddSeconds(30);
-        int? delay;
+        int? delay = null;
+        bool tunRouteMissing = false;
         checkingRecovery = true;
-        try { delay = await core.CheckMainRouteAsync(lifetime.Token); }
+        try
+        {
+            if (core.Tun && clientSettings.AutoRecover)
+                tunRouteMissing = !HasWindowsTunRoute();
+
+            // Mihomo manages server health in automatic mode. Windows TUN routing can fail independently.
+            if (!tunRouteMissing && AutomaticServerEnabled && core.AutomaticStatusSupported)
+            {
+                failedHealthChecks = 0;
+                return;
+            }
+            if (!tunRouteMissing)
+                delay = await core.CheckMainRouteAsync(lifetime.Token);
+        }
+        catch (NetworkInformationException)
+        {
+            return;
+        }
         catch (Exception error) when (IsHostCommunicationError(error) || error is HttpRequestException or ObjectDisposedException)
         {
             delay = null;
@@ -319,7 +340,8 @@ public partial class MainWindow
         {
             ScheduleRecovery();
             await StopAsync(preserveKillSwitch: true);
-            NotifyTray("Соединение потеряно. Linkway попробует переподключиться.");
+            NotifyTray(tunRouteMissing ? "Маршрут TUN потерян. Linkway попробует переподключиться."
+                : "Соединение потеряно. Linkway попробует переподключиться.");
         });
     }
 
