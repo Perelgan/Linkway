@@ -60,11 +60,28 @@ try
         "An older selection retains its exact archive URL");
     Require(UpdateVersion.Parse("1.2.0")!.CompareTo(UpdateVersion.Parse("1.2.0-rc.1")) > 0,
         "A stable release supersedes a prerelease of the same version");
-    var nextBeta = UpdateVersion.Parse("v1.4.4-beta.20")!;
-    Require(nextBeta.DisplayName == "1.4-beta.20" && nextBeta.ToString() == "1.4.4-beta.20" &&
-        nextBeta.CompareTo(UpdateVersion.Parse("1.4.3-beta.1")) > 0 &&
-        UpdateVersion.Parse("1.4.0")?.DisplayName == "1.4.0",
-        "Beta labels omit the patch component while existing updaters can order and verify the release");
+    var released14 = new[] { "1.4.0-beta.18", "1.4.0", "1.4.1-beta.1", "1.4.2-beta.1", "1.4.3-beta.1",
+        "1.4.0-beta.19", "1.4.4-beta.20", "1.4.5-beta.24", "1.4-beta.25", "1.4-beta.100" };
+    var ordered14 = released14.Reverse().Select(tag => UpdateVersion.Parse(tag)!).Order().ToArray();
+    Require(ordered14.Select(version => version.ToString()).SequenceEqual(released14) &&
+        ordered14.Select(version => version.DisplayName).SequenceEqual(
+            ["1.4-beta.18", "1.4", "1.4-beta.19", "1.4-beta.20", "1.4-beta.21",
+             "1.4-beta.22", "1.4-beta.23", "1.4-beta.24", "1.4-beta.25", "1.4-beta.100"]) &&
+        UpdateVersion.Parse("v1.5")?.ToString() == "1.5" &&
+        UpdateVersion.Parse("1.5")!.CompareTo(UpdateVersion.Parse("1.5-beta.1")) > 0 &&
+        UpdateVersion.Parse("1.3.2")?.DisplayName == "1.3 · архив 3" &&
+        UpdateVersion.Parse("1.3.3")?.DisplayName == "1.3",
+        "Published releases have distinct two-component labels and are ordered by beta number around the stable launch");
+    var compatible = JsonSerializer.SerializeToElement(new[]
+    {
+        Release("1.4.5-beta.24", prerelease: true), Release("1.4-beta.24", prerelease: true),
+        Release("1.4.0-beta.19", prerelease: true), Release("1.5")
+    });
+    var compatibleBuilds = GitHubUpdates.OrderReleases(GitHubUpdates.ReadReleases(compatible, true));
+    Require(compatibleBuilds.Select(build => build.Tag).SequenceEqual(["v1.5", "v1.4-beta.24", "v1.4.0-beta.19"]) &&
+        compatibleBuilds[2].Download.AbsolutePath.Contains("/v1.4.0-beta.19/", StringComparison.Ordinal) &&
+        GitHubUpdates.ReadReleases(compatible, false).Single().Tag == "v1.5",
+        "The updater accepts short tags, keeps legacy asset URLs and prefers a canonical tag for the same build number");
 
     Require(RouteProbeTarget.Parse("https://пример.рф:8443/path?q=1") is { Host: "xn--e1afmkfd.xn--p1ai", Port: 8443 } &&
         RouteProbeTarget.Parse("[2001:db8::1]:443")?.Authority == "[2001:db8::1]:443" &&

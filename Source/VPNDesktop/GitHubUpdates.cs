@@ -52,8 +52,7 @@ internal static partial class GitHubUpdates
         try
         {
             var saved = JsonSerializer.Deserialize<CachedRelease?[]>(File.ReadAllBytes(CachePath)) ?? [];
-            return saved.Select(entry => entry?.ToRelease()).OfType<GitHubRelease>()
-                .OrderByDescending(release => release.Version).DistinctBy(release => release.Version).ToArray();
+            return OrderReleases(saved.Select(entry => entry?.ToRelease()).OfType<GitHubRelease>());
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException)
         {
@@ -101,8 +100,14 @@ internal static partial class GitHubUpdates
                 break;
         }
 
-        return releases.OrderByDescending(release => release.Version).DistinctBy(release => release.Version).ToArray();
+        return OrderReleases(releases);
     }
+
+    internal static GitHubRelease[] OrderReleases(IEnumerable<GitHubRelease> releases) => releases
+        .GroupBy(release => release.Version.DisplayName, StringComparer.Ordinal)
+        .Select(group => group.OrderBy(release => release.Version.Number.Build >= 0)
+            .ThenByDescending(release => release.Version).First())
+        .OrderByDescending(release => release.Version).ToArray();
 
     internal static IEnumerable<GitHubRelease> ReadReleases(JsonElement releases, bool experimental)
     {

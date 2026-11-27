@@ -16,13 +16,15 @@ public partial class MainWindow
     private string? pendingUpdate;
     private bool killSwitch;
 
-    private sealed record UpdateBuildChoice(GitHubRelease Release, string Label, bool Latest = false)
+    private sealed record UpdateBuildChoice(GitHubRelease Release, bool Latest = false)
     {
+        public string Label => Release.Version.DisplayName;
+
         public string DisplayName
         {
             get
             {
-                string version = Release.Version == GitHubUpdates.InstalledRelease
+                string version = Label == GitHubUpdates.InstalledRelease.DisplayName
                     ? $"{Label} (установлена)" : Label;
                 return Latest ? $"Последняя версия · {version}" : version;
             }
@@ -118,7 +120,7 @@ public partial class MainWindow
 
     private string? UpdateBlockReason(GitHubRelease release)
     {
-        if (release.Version == GitHubUpdates.InstalledRelease)
+        if (release.Version.DisplayName == GitHubUpdates.InstalledRelease.DisplayName)
             return $"Сборка {release.Version.DisplayName} уже установлена. Нажмите «Проверить обновления», чтобы обновить список.";
         if ((session is not null || killSwitch || backgroundUnavailable) && !SupportsBackgroundSession(release))
             return clientSettings.ExperimentalUpdates
@@ -196,22 +198,14 @@ public partial class MainWindow
 
     private void ShowCachedBuilds(UpdateBuildChoice? previous = null)
     {
-        var builds = cachedBuilds.Where(build => clientSettings.ExperimentalUpdates || build.Version.Prerelease is null).ToArray();
-        var labels = builds.ToLookup(build => build.Version.DisplayName);
-        var choices = builds.Select(build =>
-        {
-            string label = build.Version.DisplayName;
-            // Older prereleases sometimes reused beta.1 after increasing the patch number.
-            if (labels[label].Skip(1).Any())
-                label += $" · выпуск {build.Version.Number.Build}";
-            return new UpdateBuildChoice(build, label);
-        }).ToList();
+        var choices = cachedBuilds.Where(build => clientSettings.ExperimentalUpdates || build.Version.Prerelease is null)
+            .Select(build => new UpdateBuildChoice(build)).ToList();
         if (choices.Count > 0)
             choices.Insert(0, choices[0] with { Latest = true });
 
         UpdateBuilds.ItemsSource = choices;
         UpdateBuilds.SelectedItem = previous is { Latest: false }
-            ? choices.FirstOrDefault(choice => !choice.Latest && choice.Release.Version == previous.Release.Version)
+            ? choices.FirstOrDefault(choice => !choice.Latest && choice.Label == previous.Label)
                 ?? choices.FirstOrDefault()
             : choices.FirstOrDefault();
         ShowBuildStatus();

@@ -292,7 +292,7 @@ public partial class MainWindow
         {
             string report = JsonSerializer.Serialize(new
             {
-                Version = GitHubUpdates.InstalledRelease.ToString(),
+                Version = GitHubUpdates.InstalledRelease.DisplayName,
                 Windows = Environment.OSVersion.Version.ToString(),
                 Mode = diagnostics?.Mode ?? (TunMode.IsChecked == true ? "TUN" : "PROXY"),
                 KillSwitch = diagnostics?.KillSwitch ?? killSwitch,
